@@ -1,9 +1,12 @@
-const Customer = require('../Models/customerModel');
-const catchAsync = require('../utils/catchAsyncModule');
-const AppError = require('../utils/appError');
-const { body, validationResult } = require('express-validator');
-const multer = require('multer');
-const handleFactory = require('./handleFactory');
+import { Request, Response, NextFunction } from 'express';
+import Customer, { ICustomer, ICustomerModel, IPhoneNumber } from '../models/customerModel'; // Import Model and Interfaces
+import {catchAsync} from '../utils/catchAsyncModule'; // Assuming this is now a TS module
+import AppError from '../utils/appError';         // Assuming this is now a TS module
+import { body, validationResult } from 'express-validator'; // For validation middleware
+import multer from 'multer';                      // For file uploads
+import * as handleFactory from './handleFactory'; // Import all from handleFactory
+
+import { Types } from 'mongoose'; // For ObjectId type
 
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
@@ -32,10 +35,10 @@ exports.newCustomer = [
   body('email').isEmail().withMessage('Invalid email'),
   body('fullname').notEmpty().withMessage('Full name is required'),
   body('phoneNumbers.*.number').notEmpty().withMessage('Phone number is required'),
-  catchAsync(async (req, res, next) => {
+  catchAsync(async (req:any, res:any, next:any) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      return next(new AppError(errors.array().map((e) => e.msg).join(', '), 400));
+      return next(new AppError(errors.array().map((e: { msg: any; }) => e.msg).join(', '), 400));
     }
 
     const { email, phoneNumbers, fullname, ...otherData } = req.body;
@@ -76,7 +79,7 @@ exports.newCustomer = [
   }),
 ];
 
-exports.getCustomerById = catchAsync(async (req, res, next) => {
+exports.getCustomerById = catchAsync(async (req:any, res:any, next:any) => {
   const userId = req.user._id;
   const customerId = req.params.id;
 
@@ -97,22 +100,22 @@ exports.getAllCustomers = handleFactory.getAll(Customer);
 exports.updateCustomer = handleFactory.updateOne(Customer);
 exports.deleteCustomer = handleFactory.deleteOne(Customer);
 
-exports.deactivateMultipleCustomers = catchAsync(async (req, res, next) => {
-  const ids = req.body.ids;
-  const userId = req.user._id;
+// exports.deactivateMultipleCustomers = catchAsync(async (req, res, next) => {
+//   const ids = req.body.ids;
+//   const userId = req.user._id;
 
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    return next(new AppError('No valid IDs provided for deactivation.', 400));
-  }
+//   if (!ids || !Array.isArray(ids) || ids.length === 0) {
+//     return next(new AppError('No valid IDs provided for deactivation.', 400));
+//   }
 
-  const result = await Customer.updateMany(
-    { _id: { $in: ids }, owner: userId },
-    { status: 'inactive' }
-  );
+//   const result = await Customer.updateMany(
+//     { _id: { $in: ids }, owner: userId },
+//     { status: 'inactive' }
+//   );
 
-  res.status(200).json({
-    status: 'success',
-    message: `${result.modifiedCount} customers deactivated successfully`,
-    data: { modifiedCount: result.modifiedCount }
-  });
-});
+//   res.status(200).json({
+//     status: 'success',
+//     message: `${result.modifiedCount} customers deactivated successfully`,
+//     data: { modifiedCount: result.modifiedCount }
+//   });
+// });

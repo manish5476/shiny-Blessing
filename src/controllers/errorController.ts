@@ -1,277 +1,176 @@
-const AppError = require("../utils/appError");
+// src/controllers/errorController.ts (or globalErrorHandler.ts)
 
-const handleCastErrorDB = (err) => {
-  const message = `Invalid ${err.path}: ${err.value}`;
+import { Request, Response, NextFunction } from 'express';
+import AppError from '../utils/appError'; // Import your AppError class
+
+// --- Type Definitions for Mongoose & JWT Errors ---
+
+// Extend Error interface for common properties
+interface CustomError extends Error {
+  statusCode?: number;
+  status?: string;
+  isOperational?: boolean;
+  code?: number; // For MongoDB duplicate key errors (e.g., 11000)
+  keyValue?: Record<string, any>; // For duplicate key errors
+  errors?: Record<string, any>; // For validation errors
+  path?: string; // For CastError
+  value?: any; // For CastError
+  errmsg?: string; // Old Mongoose error message for duplicates (less common now)
+  details?: Record<string, any>; // For custom AppError details
+}
+
+// Mongoose CastError type
+interface MongooseCastError extends CustomError {
+  name: 'CastError';
+  path: string;
+  value: any;
+}
+
+// Mongoose Duplicate Key Error type (MongoDB error code 11000)
+interface MongooseDuplicateKeyError extends CustomError {
+  code: 11000;
+  keyValue: Record<string, any>;
+  // For older Mongoose versions or direct MongoDB errors, might have errmsg
+  errmsg?: string; // Example: "E11000 duplicate key error collection: mydb.users index: email_1 dup key: { email: \"test@example.com\" }"
+}
+
+// Mongoose ValidationError type
+interface MongooseValidationError extends CustomError {
+  name: 'ValidationError';
+  errors: {
+    [key: string]: {
+      name: string;
+      message: string;
+      path: string;
+      kind: string;
+      value: any;
+    };
+  };
+}
+
+// JWT Errors
+interface JsonWebTokenError extends CustomError {
+  name: 'JsonWebTokenError';
+}
+
+interface TokenExpiredError extends CustomError {
+  name: 'TokenExpiredError';
+}
+
+// --- Error Handling Functions ---
+
+const handleCastErrorDB = (err: MongooseCastError): AppError => {
+  const message = `Invalid ${err.path}: "${err.value}"`;
   return new AppError(message, 400);
 };
 
-//
-const sendDuplicateErorDB = (err) => {
-  const value = Object.values(err.keyValue).join(", ");
+const handleDuplicateErrorDB = (err: MongooseDuplicateKeyError): AppError => {
+  let value: string;
+  // Modern Mongoose errors usually have keyValue directly
+  if (err.keyValue) {
+    value = Object.values(err.keyValue).join(", ");
+  } else if (err.errmsg) {
+    // Fallback for older Mongoose or direct MongoDB errors
+    const match = err.errmsg.match(/dup key: \{ : "([^"]+)" \}/) || err.errmsg.match(/(["])(\\?.)*?\1/);
+    value = match ? match[0] : 'unknown value';
+    if (value.startsWith('"') && value.endsWith('"')) {
+        value = value.slice(1, -1); // Remove quotes if present
+    }
+  } else {
+      value = 'unknown';
+  }
+
   const message = `Duplicate field value: "${value}". Please use another value.`;
   return new AppError(message, 400);
 };
-// const sendDuplicateErorDB = (err) => {
-//   // const value = Object.values(err.keyValue).join(", ");
-//   // const message = `Duplicate field value: ${value}. Please use another value.`;
-//   // return new AppError(message, 400);
-//   const value = err.errmsg.match(/(["])(\\?.)*?\1/)[0];
-//   console.log(value, err);
-//   const message = `Duplicate filed value :${value} use another value`;
-//   return new AppError(message, 400);
-// };
-//
-const sendTokenError = (err) => {
-  return new AppError("invalid token log in Again", 401);
-};
 
-const sendValidationError = (err) => {
-  const errors = {};
-  Object.values(err.errors).forEach(er => {
-    errors[er.path] = er.message;
+const handleValidationErrorDB = (err: MongooseValidationError): AppError => {
+  const errors: Record<string, string> = {}; // Store errors as key-value pairs
+  Object.values(err.errors).forEach(val => {
+    errors[val.path] = val.message;
   });
-  const message = 'Invalid input data';
-  return new AppError(message, 400, { errors });
+
+  const message = `Invalid input data. ${Object.values(errors).join('. ')}`; // More descriptive message
+  return new AppError(message, 400); // Pass errors as details
 };
 
-//
-const sendTokenExpireError = (err) => {
-  return new AppError("invalid token or token expired so log in again", 401);
+const handleJWTError = (): AppError => {
+  return new AppError('Invalid token. Please log in again!', 401);
 };
 
-//
-const sendErrorDev = (err, res) => {
-  res.status(err.statusCode).json({
-    status: err.status,
+const handleJWTExpiredError = (): AppError => {
+  return new AppError('Your token has expired! Please log in again.', 401);
+};
+
+// --- Development Error Response ---
+
+const sendErrorDev = (err: CustomError, res: Response) => {
+  res.status(err.statusCode || 500).json({
+    status: err.status || 'error',
     error: err,
     message: err.message,
     stack: err.stack,
   });
 };
 
-const sendErrorProd = (err, res) => {
+// --- Production Error Response ---
+
+const sendErrorProd = (err: CustomError, res: Response) => {
+  // Operational, trusted error: send message to client
   if (err.isOperational) {
-    res.status(err.statusCode).json({
-      status: err.status,
+    res.status(err.statusCode || 500).json({
+      status: err.status || 'error',
       message: err.message,
-      errors: err.details || null,
+      errors: err.details || undefined, // Include details if available (e.g., for validation)
     });
+
+  // Programming or other unknown error: don't leak error details
   } else {
-    console.error("ERROR IN PRODUCTION:", err);
+    // 1) Log error
+    console.error('ERROR 💥', err); // Use a more distinct log for unhandled errors
+
+    // 2) Send generic message
     res.status(500).json({
-      status: "error",
-      message: "Something went wrong from backend",
+      status: 'error',
+      message: 'Something went very wrong from the server!',
     });
   }
 };
 
+// --- Global Error Handling Middleware ---
 
-module.exports = (err, req, res, next) => {
+// The main error handling middleware function
+module.exports = (err: CustomError, req: Request, res: Response, next: NextFunction) => {
+  // Set default status code and status for the error
   err.statusCode = err.statusCode || 500;
-  err.status = err.status || "error";
+  err.status = err.status || 'error';
 
-  if (process.env.NODE_ENV === "development") {
+  if (process.env.NODE_ENV === 'development') {
     sendErrorDev(err, res);
-  } else if (process.env.NODE_ENV === "production") {
-    if (err.name === "CastError") err = handleCastErrorDB(err);
-    if (err.code === 11000) err = sendDuplicateErorDB(err);
-    if (err.name === "ValidationError") err = sendValidationError(err);
-    if (err.name === "JsonWebTokenError") err = sendTokenError(err);
-    if (err.name === "TokenExpiredError") err = sendTokenExpireError(err);
-    sendErrorProd(err, res);
+  } else if (process.env.NODE_ENV === 'production') {
+    // Create a copy of the error to avoid modifying the original
+    let error = { ...err };
+    error.name = err.name; // Copy name for type checking
+    error.message = err.message; // Copy message
+    error.stack = err.stack; // Copy stack
+
+    // Handle specific error types
+    if (error.name === 'CastError') {
+        error = handleCastErrorDB(error as MongooseCastError);
+    }
+    if (error.code === 11000) {
+        error = handleDuplicateErrorDB(error as MongooseDuplicateKeyError);
+    }
+    if (error.name === 'ValidationError') {
+        error = handleValidationErrorDB(error as MongooseValidationError);
+    }
+    if (error.name === 'JsonWebTokenError') {
+        error = handleJWTError();
+    }
+    if (error.name === 'TokenExpiredError') {
+        error = handleJWTExpiredError();
+    }
+
+    sendErrorProd(error, res);
   }
 };
-
-
-
-// const sendValidationError = (err, res) => {
-//   const error = Object.values(err.errors).map((er) => er.message);
-//   const message = `invalid input value ${error.join(". ")}`;
-//   return new AppError(message, 400);
-// };
-
-// const sendErrorProd = (err, res) => {
-//   if (err.isOperational) {
-//     res.status(err.statusCode).json({
-//       status: err.status,
-//       message: err.message,
-//     });
-//   } else {
-//     console.error("ERROR IN PRODUCTION:", err);
-//     res.status(500).json({
-//       status: "error",
-//       message: "Some error occurred in prod!",
-//     });
-//   }
-// };
-
-// module.exports = (err, req, res, next) => {
-//   err.statusCode = err.statusCode || 500;
-//   err.status = err.status || "error";
-
-//   if (process.env.NODE_ENV === "development") {
-//     sendErrorDev(err, res);
-//   } else if (process.env.NODE_ENV === "production") {
-//     // DO NOT CREATE A NEW OBJECT. Modify err directly
-//     if (err.name === "CastError") err = handleCastErrorDB(err); // Reassign to err
-//     if (err.code === 11000) err = sendDuplicateErorDB(err);    // Reassign to err
-//     if (err.name === "ValidationError") err = sendValidationError(err); // Reassign to err
-//     if (err.name === "JsonWebTokenError") err = sendTokenError(err); // Reassign to err
-//     if (err.name === "TokenExpiredError") err = sendTokenExpireError(err); // Reassign to err
-//     sendErrorProd(err, res); // Now err is correctly updated
-//   }
-//   next();
-// };
-
-// 
-// module.exports = (err, req, res, next) => {
-//   // console.error(err.stack);
-//   err.statusCode = err.statusCode || 500;
-//   err.status = err.status || "error";
-//   if (process.env.NODE_ENV === "development") {
-//     sendErrorDev(err, res);
-//   } else if (process.env.NODE_ENV === "production") {
-//     let error = {
-//       ...err,
-//       message: err.message,
-//       name: err.name,
-//       stack: err.stack,
-//     };
-//     if (error.name === "CastError") error = handleCastErrorDB(error);
-//     if (error.code === 11000) error = sendDuplicateErorDB(error);
-//     if (err.name === "validationError") error = sendValidationError(error);
-//     if (error.name === "JsonWebTokenError") error = sendTokenError(error);
-//     if (error.name === "TokenExpiredError") error = sendTokenExpireError(error);
-//   }
-  
-//   sendErrorProd(err, res);
-//   next(); // Ensure the middleware chain continues if needed
-// };
-
-// const AppError = require("../utils/appError");
-
-// const handleCastErrorDB = (err) => {
-//   const message = `invalid ${err.path}: ${err.value}`;
-//   return new AppError(message, 400);
-// };
-
-// const sendErrorDev = (err, res) => {
-//   res.status(err.statusCode).json({
-//     status: err.status,
-//     errors: err,
-//     message: err.message,
-//     stack: err.stack,
-//   });
-// };
-
-// const sendErrorProd = (err, res) => {
-//   if (err.isOperational) {
-//     res.status(err.statusCode).json({
-//       status: err.status,
-//       message: err.message,
-//     });
-//     //programming or other error:dont disclose the error
-//   } else {
-//     console.error("ERROR IN PRODUCTION 🫠🫠🫠🫠", err);
-//     // console.error
-
-//     res.status(500).json({
-//       status: "error",
-//       message: "some error occurred",
-//     });
-//   }
-// };
-
-// module.exports = (err, req, res, next) => {
-//   console.log(err.stack);
-//   err.statusCode = err.statusCode || 500;
-//   err.status = err.status || "error";
-//   //
-//   if (process.env.NODE_ENV === "development") {
-//     sendErrorDev(err, res);
-//   } else if (process.env.NODE_ENV === "production") {
-//     let error = { ...err };
-//     if (error.name === "CastError") error = handleCastErrorDB(error);
-//     sendErrorProd(error, res);
-//   }
-// };
-
-// // res.status(err.statusCode).json({
-// //   status: err.status,
-// //   message: err.message,
-// // });
-
-// // app.all("*", (req, res, next) => {
-// //   next(
-// //     new AppError(
-// //       `Cant find the Requested url ${req.originalUrl} on Server `,
-// //       404
-// //     )
-// //   );
-// // });
-
-// chatgptone
-// const AppError = require("../utils/appError");
-
-// const handleCastErrorDB = (err) => {
-//   const message = `Invalid ${err.path}: ${err.value}`;
-//   return new AppError(message, 400);
-// };
-
-// const sendDuplicateErorDB = (err) => {
-//   const value = Object.values(err.keyValue).join(", ");
-//   const message = `Duplicate field value: "${value}". Please use another value.`;
-//   return new AppError(message, 400);
-// };
-
-// const sendValidationError = (err) => {
-//   const errors = Object.values(err.errors).map((er) => er.message);
-//   const message = `Invalid input data: ${errors.join(". ")}`;
-//   return new AppError(message, 400);
-// };
-
-// const sendErrorDev = (err, res) => {
-//   console.log("Request Headers:", req.headers);
-//   console.log("Request Body:", req.body);
-//   res.status(err.statusCode).json({
-//     status: err.status,
-//     error: err,
-//     message: err.message,
-//     stack: err.stack,
-//   });
-// };
-
-// const sendErrorProd = (err, res) => {
-//   if (err.isOperational) {
-//     res.status(err.statusCode).json({
-//       status: err.status,
-//       message: err.message,
-//     });
-//   } else {
-//     console.error("ERROR IN PRODUCTION:", err);
-//     res.status(500).json({
-//       status: "error",
-//       message: "Something went wrong! Please try again later.",
-//     });
-//   }
-// };
-
-// module.exports = (err, req, res, next) => {
-//   console.error(err.stack);
-
-//   err.statusCode = err.statusCode || 500;
-//   err.status = err.status || "error";
-
-//   if (process.env.NODE_ENV === "development") {
-//     sendErrorDev(err, res);
-//   } else if (process.env.NODE_ENV === "production") {
-//     let error = Object.assign({}, err);
-//     if (error.name === "CastError") error = handleCastErrorDB(error);
-//     if (error.code === 11000) error = sendDuplicateErorDB(error);
-//     if (error.name === "ValidationError") error = sendValidationError(error);
-
-//     sendErrorProd(error, res);
-//   }
-
-//   next();
-// };

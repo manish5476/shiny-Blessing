@@ -1,19 +1,47 @@
-const Invoice = require('../Models/invoiceModel');
-const catchAsync = require('../Utils/catchAsyncModule');
-const AppError = require('../Utils/appError');
-const { body, validationResult } = require('express-validator');
-const handleFactory = require('./handleFactory')
-exports.findDuplicateInvoice = catchAsync(async (req, res, next) => {
-    const existingInvoice = await Invoice.findOne({ invoiceNumber: req.body.invoiceNumber });
+// src/controllers/invoiceController.ts
+
+import { Request, Response, NextFunction } from 'express';
+import Invoice, { IInvoice } from '../models/invoiceModel';
+import {catchAsync} from '../utils/catchAsyncModule';
+import AppError from '../utils/appError';
+import { body, validationResult } from 'express-validator';
+import * as handleFactory from './handleFactory';
+import { Types } from 'mongoose';
+
+
+/**
+ * Middleware to check for duplicate invoice numbers before creating a new invoice.
+ */
+export const findDuplicateInvoice = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    // Use 'as string' to explicitly tell TypeScript that req.body.invoiceNumber is a string
+    const invoiceNumber = req.body.invoiceNumber as string;
+
+    if (!invoiceNumber) {
+        return next(new AppError('Invoice number is required for duplicate check.', 400));
+    }
+
+    const existingInvoice = await Invoice.findOne({ invoiceNumber: invoiceNumber });
+
     if (existingInvoice) {
-        return next(new AppError(`Invoice with number ${req.body.invoiceNumber} already exists`, 400));
+        return next(new AppError(`Invoice with number ${invoiceNumber} already exists.`, 400));
     }
     next();
 });
 
-const productSalesStatistics = async (startDate, endDate) => {
+/**
+ * Helper function to generate product sales statistics using MongoDB aggregation.
+ * @param {string} startDate - Start date string (e.g., 'YYYY-MM-DD').
+ * @param {string} endDate - End date string (e.g., 'YYYY-MM-DD').
+ * @returns {Promise<Array<{ product: string, totalQuantitySold: number }>>} Sales data.
+ */
+interface ProductSalesStat {
+    product: string;
+    totalQuantitySold: number;
+}
+
+const productSalesStatistics = async (startDate: string, endDate: string): Promise<ProductSalesStat[]> => {
     try {
-        const salesData = await Invoice.aggregate([
+        const salesData = await Invoice.aggregate<ProductSalesStat>([ // Type the aggregation result
             {
                 $match: {
                     invoiceDate: {
@@ -23,146 +51,122 @@ const productSalesStatistics = async (startDate, endDate) => {
                 },
             },
             {
-                $unwind: '$items',
+                $unwind: '$items', // Assuming 'items' is the array of products in your Invoice schema
             },
             {
                 $group: {
-                    _id: '$items.product',
-                    totalQuantitySold: { $sum: '$items.quantity' },
+                    _id: '$items.productId', // Group by product ID (assuming `productId` in Invoice.items)
+                    totalQuantitySold: { $sum: '$items.quantity' }, // Sum quantity
                 },
             },
             {
                 $lookup: {
-                    from: 'products', // Replace with your actual product collection name
+                    from: 'products', // Replace with your actual product collection name (usually pluralized lowercase model name)
                     localField: '_id',
                     foreignField: '_id',
                     as: 'productDetails',
                 },
             },
             {
-                $unwind: '$productDetails',
+                $unwind: '$productDetails', // Unwind the productDetails array
             },
             {
                 $project: {
-                    _id: 0,
-                    product: '$productDetails.title',
-                    totalQuantitySold: 1,
+                    _id: 0, // Exclude _id
+                    product: '$productDetails.title', // Assuming 'title' is the product name
+                    totalQuantitySold: 1, // Include totalQuantitySold
                 },
             },
             {
-                $sort: { totalQuantitySold: -1 },
+                $sort: { totalQuantitySold: -1 }, // Sort by quantity sold descending
             },
         ]);
 
         return salesData;
-    } catch (error) {
-        console.error('Error generating product sales statistics:', error);
-        throw error;
+    } catch (error: unknown) { // Catch as unknown for better type safety
+        console.error('Error generating product sales statistics:', error instanceof Error ? error.message : error);
+        throw error; // Re-throw to be caught by catchAsync or upstream error handler
     }
 };
 
-exports.getProductSales = async (req, res, next) => {
+/**
+ * Controller to get product sales statistics within a date range.
+ */
+export const getProductSales = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const { startDate, endDate } = req.body;
 
+    // Basic validation for dates
     if (!startDate || !endDate) {
-        return next(new AppError('Please provide startDate and endDate in the request body', 400));
+        return next(new AppError('Please provide startDate and endDate in the request body.', 400));
     }
 
-    try {
-        const salesStats = await productSalesStatistics(startDate, endDate);
-        res.status(200).json({
-            status: 'success',
-            data: {
-                salesStatistics: salesStats,
-            },
-        });
-    } catch (error) {
-        return next(error); // Handle errors appropriately
+    // Optional: Add more robust date format validation if needed
+    if (isNaN(new Date(startDate).getTime()) || isNaN(new Date(endDate).getTime())) {
+        return next(new AppError('Invalid date format. Please use a valid date string (e.g., YYYY-MM-DD).', 400));
     }
-};
-exports.getAllInvoice = handleFactory.getAll(Invoice);
-exports.getInvoiceById = handleFactory.getOne(Invoice);
-exports.newInvoice = handleFactory.newOne(Invoice);
-exports.deleteInvoice = handleFactory.deleteOne(Invoice);
-exports.updateInvoice = handleFactory.updateOne(Invoice);
-// exports.newInvoice = handleFactory.newOne(Invoice);
 
-// exports.newInvoice = [
-//     body('invoiceNumber').notEmpty().withMessage('Invoice number is required'),
-//     body('buyer').notEmpty().withMessage('Buyer is required'),
-//     body('items').isArray().withMessage('Items must be an array'),
-//     catchAsync(async (req, res, next) => {
-//         const errors = validationResult(req);
-//         if (!errors.isEmpty()) {
-//             return next(new AppError(errors.array().map(e => e.msg).join(', '), 400));
-//         }
-//         const invoice = await Invoice.create(req.body);
-//         res.status(201).json({
-//             status: 'success',
-//             data: invoice,
-//         });
-//     }),
-// ];
+    const salesStats = await productSalesStatistics(startDate as string, endDate as string);
 
-// exports.getAllInvoice = catchAsync(async (req, res, next) => {
-//     const invoices = await Invoice.find();
-//     res.status(200).json({
-//         status: 'success',
-//         results: invoices.length,
-//         data: invoices,
-//     });
-// });
+    res.status(200).json({
+        status: 'success',
+        data: {
+            salesStatistics: salesStats,
+        },
+    });
+});
 
-// exports.getInvoiceById = catchAsync(async (req, res, next) => {
-//     const invoice = await Invoice.findById(req.params.id);
-//     if (!invoice) return next(new AppError('Invoice not found with Id', 404));
-//     res.status(200).json({
-//         status: 'success',
-//         data: invoice,
-//     });
-// });
+// --- CRUD Operations using handleFactory ---
 
-// exports.updateInvoice = catchAsync(async (req, res, next) => {
-//     const invoice = await Invoice.findByIdAndUpdate(req.params.id, req.body, {
-//         new: true,
-//         runValidators: true,
-//     });
-//     if (!invoice) return next(new AppError('Invoice not found with Id', 404));
-//     res.status(201).json({
-//         status: 'success',
-//         data: invoice,
-//     });
-// });
+// For handleFactory functions, we need to pass the specific Mongoose Model.
+// We also ensure that IInvoice extends IOwnedDocument (which it should, based on customerModel)
+// to satisfy the generic constraint of handleFactory functions.
 
-// exports.deleteInvoice = catchAsync(async (req, res, next) => {
-//     const invoice = await Invoice.findByIdAndDelete(req.params.id);
-//     if (!invoice) return next(new AppError('Invoice not found with Id', 404));
-//     res.status(200).json({
-//         status: 'success',
-//         message: 'Invoice deleted successfully',
-//         data: null,
-//     });
-// });
+/**
+ * Get all invoices.
+ * Uses handleFactory.getAll.
+ */
+export const getAllInvoice = handleFactory.getAll<IInvoice>(Invoice);
 
+/**
+ * Get a single invoice by ID.
+ * Uses handleFactory.getOne. You can optionally specify populate options here.
+ */
+export const getInvoiceById = handleFactory.getOne<IInvoice>(Invoice, [
+    'items.productId', // Assuming 'product' is a ref to Product model in IInvoice.items
+    'customer',         // Assuming 'customer' is a ref to Customer model in IInvoice
+    'owner'             // To populate the owner details
+]);
 
-// const { query } = require("express");
-// const Invoice = require("./../Models/invoiceModel");
-// const catchAsync = require("../Utils/catchAsyncModule");
-// const AppError = require("../Utils/appError");
-// const handleFactory = require("./handleFactory");
-// const { Status } = require("git");
+/**
+ * Create a new invoice.
+ * Uses handleFactory.newOne. The owner will be automatically assigned from req.user.
+ */
+export const newInvoice = handleFactory.newOne<IInvoice>(Invoice);
 
-// exports.findDuplicateInvoice = catchAsync(async (req, res, next) => {
-//     // console.log("Checking for duplicate with SKU:", req.body.sku);
-//     const existingInvoice = await Invoice.findOne({ sku: req.body.invoiceNumber });
-//     // console.log("Existing Invoice:", existingInvoice);
-//     if (existingInvoice) {
-//         return next(
-//             new AppError(
-//                 `Invoice with this name already exists: ${req.body.invoiceNumber}`,
-//                 400
-//             )
-//         );
-//     }
-//     next();
-// });
+/**
+ * Delete an invoice by ID.
+ * Uses handleFactory.deleteOne. Only owner or superAdmin can delete.
+ */
+export const deleteInvoice = handleFactory.deleteOne<IInvoice>(Invoice);
+
+/**
+ * Update an invoice by ID.
+ * Uses handleFactory.updateOne. Only owner or superAdmin can update.
+ */
+export const updateInvoice = handleFactory.updateOne<IInvoice>(Invoice);
+
+// You can add more specific validation middleware using express-validator here if needed.
+// Example:
+export const validateInvoiceCreation = [
+    body('invoiceNumber').notEmpty().withMessage('Invoice number is required.'),
+    body('customer').isMongoId().withMessage('Customer ID must be a valid Mongo ID.'),
+    body('totalAmount').isNumeric().withMessage('Total amount must be a number.'),
+    // ... more validations for other fields
+    (req: Request, res: Response, next: NextFunction) => {
+        const errors = validationResult(req);
+        if (!errors.isEmpty()) {
+            return next(new AppError('Validation failed.', 400));
+        }
+        next();
+    },
+];

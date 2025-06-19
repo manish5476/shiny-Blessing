@@ -1,35 +1,98 @@
 import { Request, Response, NextFunction } from 'express';
-// ✅ Preferred solution
-import { catchAsync } from '../utils/catchAsyncModule';
-import {Invoice} from '../models/invoiceModel';
-import {Product} from '../models/productModel';
-import Customer from '../models/customerModel';
-import Payment from '../models/paymentModel';
-import AppError from '../utils/appError';
+// import mongoose from 'mongoose'; // Import mongoose for Types.ObjectId
+import {catchAsync} from '../utils/catchAsyncModule';
+// import AppError from '../Utils/appError';
+import mongoose from 'mongoose'; // Import mongoose for Types.ObjectId
 
-// Extend Express Request type for authenticated user
-interface AuthenticatedRequest extends Request {
-  user: {
-    _id: string;
-    role: 'admin' | 'seller' | 'superAdmin';
-  };
+import Invoice, { IInvoice } from '../models/invoiceModel';
+import Product, { IProduct } from '../models/productModel';
+import Customer, { ICustomer } from '../models/customerModel';
+import Payment, { IPayment } from '../models/paymentModel';
+import { IUser } from '../models/UserModel'; // Assuming UserModel.ts exports IUser
+
+interface CustomRequest extends Request {
+  user?: IUser; // Make it optional for safety, though typically present after protect middleware
 }
 
-const getOwnerFilter = (req: AuthenticatedRequest) => {
-  const userId = req.user._id;
-  const isSuperAdmin = req.user.role === 'superAdmin';
-  return isSuperAdmin ? {} : { owner: userId };
-};
+// Helper function to get the owner filter
+const getOwnerFilter = (req: CustomRequest): { owner?: mongoose.Types.ObjectId } => {
+  // Ensure req.user exists and has an _id and role.
+  if (!req.user || !req.user._id) {
+    throw new AppError('User not authenticated or user ID missing.', 401);
+  }
 
-// 📊 1. Sales Performance
-export const getSalesPerformance = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+  // FIX: Explicitly cast req.user._id to mongoose.Types.ObjectId
+  // This reassures TypeScript that userId will indeed be an ObjectId.
+  const userId: mongoose.Types.ObjectId = req.user._id as mongoose.Types.ObjectId;
+  const isSuperAdmin = req.user.role === 'superAdmin';
+
+  if (isSuperAdmin) {
+    return {};
+  } else {
+    return { owner: userId };
+  }
+};
+ 
+// --- Interfaces for Aggregation Outputs ---
+
+interface SalesMetricsResult {
+  totalSales: number;
+  averageOrderValue: number;
+  totalOrders: number;
+  uniqueCustomerCount: number;
+}
+
+interface CustomerInsightResult {
+  _id: mongoose.Types.ObjectId;
+  fullname: string;
+  totalOrders: number;
+  totalSpent: number;
+  lastOrderDate: Date | null;
+}
+
+interface ProductPerformanceResult {
+  _id: mongoose.Types.ObjectId;
+  name: string;
+  category: string;
+  totalQuantity: number;
+  totalRevenue: number;
+  averagePrice: number;
+  orderCount: number;
+  profitMargin: number;
+}
+
+interface PaymentEfficiencyResult {
+  _id: string; // payment status (e.g., 'completed', 'pending')
+  totalAmount: number;
+  count: number;
+  // averageDaysToPay: number; // If you re-implement this, add its type
+}
+
+interface InventoryTurnoverResult {
+  _id: mongoose.Types.ObjectId;
+  title: string;
+  category: string;
+  currentStock: number;
+  totalSold: number;
+  averagePrice: number; // Note: This average price is from sales, not product's original price
+  turnoverRate: number;
+}
+
+// Get sales performance metrics
+export const getSalesPerformance = catchAsync(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { startDate, endDate } = req.query;
+
+  // Type assertion for query parameters
   const start = new Date(startDate as string);
   const end = new Date(endDate as string);
 
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return next(new AppError('Invalid date format. Please provide valid startDate and endDate.', 400));
+  }
+
   const ownerFilter = getOwnerFilter(req);
 
-  const salesMetrics = await Invoice.aggregate([
+  const salesMetrics = await Invoice.aggregate<SalesMetricsResult>([
     {
       $match: {
         ...ownerFilter,
@@ -67,12 +130,17 @@ export const getSalesPerformance = catchAsync(async (req: AuthenticatedRequest, 
   });
 });
 
-// 🧠 2. Customer Insights
-export const getCustomerInsights = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+// Get customer insights
+export const getCustomerInsights = catchAsync(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const ownerFilter = getOwnerFilter(req);
 
-  const insights = await Customer.aggregate([
-    { $match: ownerFilter },
+  // Ensure req.user._id is a valid ObjectId for the $eq comparison
+  const userId = req.user!._id; // `!` asserts non-null/undefined, as checked in getOwnerFilter
+
+  const customerInsights = await Customer.aggregate<CustomerInsightResult>([
+    {
+      $match: ownerFilter
+    },
     {
       $lookup: {
         from: "invoices",
@@ -87,7 +155,9 @@ export const getCustomerInsights = catchAsync(async (req: AuthenticatedRequest, 
           $filter: {
             input: "$orders",
             as: "order",
-            cond: { $eq: ["$$order.owner", req.user._id] }
+            cond: {
+              $eq: ["$$order.owner", userId] // Use the extracted userId
+            }
           }
         }
       }
@@ -101,26 +171,43 @@ export const getCustomerInsights = catchAsync(async (req: AuthenticatedRequest, 
         lastOrderDate: { $max: "$orders.date" }
       }
     },
-    { $sort: { totalSpent: -1 } },
-    { $limit: 10 }
+    {
+      $sort: { totalSpent: -1 }
+    },
+    {
+      $limit: 10
+    }
   ]);
 
   res.status(200).json({
     status: 'success',
-    data: insights
+    data: customerInsights
   });
 });
 
-// 📦 3. Product Performance
-export const getProductPerformance = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+// Get product performance analysis
+export const getProductPerformance = catchAsync(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { startDate, endDate } = req.query;
   const start = new Date(startDate as string);
   const end = new Date(endDate as string);
-  const ownerFilter = getOwnerFilter(req);
 
-  const performance = await Invoice.aggregate([
-    { $match: { ...ownerFilter, date: { $gte: start, $lte: end } } },
-    { $unwind: "$items" },
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return next(new AppError('Invalid date format. Please provide valid startDate and endDate.', 400));
+  }
+
+  const ownerFilter = getOwnerFilter(req);
+  const userId = req.user!._id; // For filtering productDetails by owner
+
+  const productPerformance = await Invoice.aggregate<ProductPerformanceResult>([
+    {
+      $match: {
+        ...ownerFilter,
+        date: { $gte: start, $lte: end }
+      }
+    },
+    {
+      $unwind: "$items"
+    },
     {
       $group: {
         _id: "$items.product",
@@ -132,16 +219,20 @@ export const getProductPerformance = catchAsync(async (req: AuthenticatedRequest
     },
     {
       $lookup: {
-        from: "products",
+        from: "products", // Ensure this matches your Product collection name
         localField: "_id",
         foreignField: "_id",
         as: "productDetails"
       }
     },
-    { $unwind: "$productDetails" },
+    {
+      $unwind: "$productDetails"
+    },
     {
       $match: {
-        ...(ownerFilter.owner && { "productDetails.owner": ownerFilter.owner })
+        // Only filter by product owner if ownerFilter has a specific owner (not superAdmin)
+        // Ensure the joined product also belongs to the current user, if not super admin
+        ...(ownerFilter.owner ? { "productDetails.owner": userId } : {})
       }
     },
     {
@@ -157,12 +248,7 @@ export const getProductPerformance = catchAsync(async (req: AuthenticatedRequest
           $multiply: [
             {
               $divide: [
-                {
-                  $subtract: [
-                    "$totalRevenue",
-                    { $multiply: ["$totalQuantity", "$productDetails.costPrice"] }
-                  ]
-                },
+                { $subtract: ["$totalRevenue", { $multiply: ["$totalQuantity", "$productDetails.costPrice"] }] },
                 "$totalRevenue"
               ]
             },
@@ -171,28 +257,34 @@ export const getProductPerformance = catchAsync(async (req: AuthenticatedRequest
         }
       }
     },
-    { $sort: { totalRevenue: -1 } }
+    {
+      $sort: { totalRevenue: -1 }
+    }
   ]);
 
   res.status(200).json({
     status: 'success',
-    data: performance
+    data: productPerformance
   });
 });
 
-// 💰 4. Payment Collection Efficiency
-export const getPaymentCollectionEfficiency = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+// Get payment collection efficiency
+export const getPaymentCollectionEfficiency = catchAsync(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { startDate, endDate } = req.query;
   const start = new Date(startDate as string);
   const end = new Date(endDate as string);
 
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return next(new AppError('Invalid date format. Please provide valid startDate and endDate.', 400));
+  }
+
   const ownerFilter = getOwnerFilter(req);
 
-  const paymentStats = await Payment.aggregate([
+  const paymentEfficiency = await Payment.aggregate<PaymentEfficiencyResult>([
     {
       $match: {
         ...ownerFilter,
-        date: { $gte: start, $lte: end }
+        createdAt: { $gte: start, $lte: end } // Assuming payment has 'createdAt' for date filtering
       }
     },
     {
@@ -201,28 +293,64 @@ export const getPaymentCollectionEfficiency = catchAsync(async (req: Authenticat
         totalAmount: { $sum: "$amount" },
         count: { $sum: 1 }
       }
-    }
+    },
+    // Re-evaluate if you need 'averageDaysToPay' here.
+    // If you do, you'll need to join with Invoices correctly,
+    // assuming a Payment document explicitly links to an Invoice.
+    // Example (requires 'invoiceId' on Payment and 'invoiceDate' on Invoice):
+    // {
+    //   $lookup: {
+    //     from: 'invoices',
+    //     localField: 'invoiceId', // Assuming Payment has invoiceId field
+    //     foreignField: '_id',
+    //     as: 'invoiceDetails'
+    //   }
+    // },
+    // { $unwind: { path: "$invoiceDetails", preserveNullAndEmptyArrays: true } },
+    // {
+    //   $project: {
+    //     _id: 1,
+    //     totalAmount: 1,
+    //     count: 1,
+    //     averageDaysToPay: {
+    //       $avg: {
+    //         $cond: {
+    //           if: { $and: ["$invoiceDetails.date", "$createdAt"] },
+    //           then: { $divide: [{ $subtract: ["$createdAt", "$invoiceDetails.date"] }, 1000 * 60 * 60 * 24] },
+    //           else: null
+    //         }
+    //       }
+    //     }
+    //   }
+    // }
   ]);
 
   res.status(200).json({
     status: 'success',
-    data: paymentStats
+    data: paymentEfficiency
   });
 });
 
-// 📦 5. Inventory Turnover
-export const getInventoryTurnover = catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+// Get inventory turnover rate
+export const getInventoryTurnover = catchAsync(async (req: CustomRequest, res: Response, next: NextFunction) => {
   const { startDate, endDate } = req.query;
   const start = new Date(startDate as string);
   const end = new Date(endDate as string);
 
-  const ownerFilter = getOwnerFilter(req);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return next(new AppError('Invalid date format. Please provide valid startDate and endDate.', 400));
+  }
 
-  const turnover = await Product.aggregate([
-    { $match: ownerFilter },
+  const ownerFilter = getOwnerFilter(req);
+  const userId = req.user!._id; // For filtering sales by owner
+
+  const inventoryTurnover = await Product.aggregate<InventoryTurnoverResult>([
+    {
+      $match: ownerFilter
+    },
     {
       $lookup: {
-        from: "invoices",
+        from: "invoices", // Ensure this matches your Invoice collection name
         localField: "_id",
         foreignField: "items.product",
         as: "sales"
@@ -236,7 +364,7 @@ export const getInventoryTurnover = catchAsync(async (req: AuthenticatedRequest,
             as: "sale",
             cond: {
               $and: [
-                { $eq: ["$$sale.owner", req.user._id] },
+                { $eq: ["$$sale.owner", userId] }, // Check invoice owner
                 { $gte: ["$$sale.date", start] },
                 { $lte: ["$$sale.date", end] }
               ]
@@ -251,6 +379,7 @@ export const getInventoryTurnover = catchAsync(async (req: AuthenticatedRequest,
         title: 1,
         category: 1,
         currentStock: 1,
+        // Calculate total sold quantity for THIS product from filtered sales
         totalSold: {
           $sum: {
             $map: {
@@ -259,21 +388,22 @@ export const getInventoryTurnover = catchAsync(async (req: AuthenticatedRequest,
               in: {
                 $sum: {
                   $map: {
-                    input: "$$sale.items",
-                    as: "item",
-                    in: {
-                      $cond: [
-                        { $eq: ["$$item.product", "$_id"] },
-                        "$$item.quantity",
-                        0
-                      ]
-                    }
+                    input: {
+                      $filter: {
+                        input: "$$sale.items",
+                        as: "item",
+                        cond: { $eq: ["$$item.product", "$_id"] }
+                      }
+                    },
+                    as: "filteredItem",
+                    in: "$$filteredItem.quantity"
                   }
                 }
               }
             }
           }
         },
+        // Calculate average price from sales for this product
         averagePrice: {
           $avg: {
             $map: {
@@ -282,15 +412,15 @@ export const getInventoryTurnover = catchAsync(async (req: AuthenticatedRequest,
               in: {
                 $avg: {
                   $map: {
-                    input: "$$sale.items",
-                    as: "item",
-                    in: {
-                      $cond: [
-                        { $eq: ["$$item.product", "$_id"] },
-                        "$$item.price",
-                        0
-                      ]
-                    }
+                    input: {
+                      $filter: {
+                        input: "$$sale.items",
+                        as: "item",
+                        cond: { $eq: ["$$item.product", "$_id"] }
+                      }
+                    },
+                    as: "filteredItem",
+                    in: "$$filteredItem.price"
                   }
                 }
               }
@@ -305,16 +435,18 @@ export const getInventoryTurnover = catchAsync(async (req: AuthenticatedRequest,
           $cond: {
             if: { $ne: ["$currentStock", 0] },
             then: { $divide: ["$totalSold", "$currentStock"] },
-            else: 0
+            else: 0 // Avoid division by zero
           }
         }
       }
     },
-    { $sort: { turnoverRate: -1 } }
+    {
+      $sort: { turnoverRate: -1 }
+    }
   ]);
 
   res.status(200).json({
     status: 'success',
-    data: turnover
+    data: inventoryTurnover
   });
 });

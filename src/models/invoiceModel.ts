@@ -20,7 +20,7 @@ export interface IInvoiceItem {
 
 // 2. Interface for Invoice document
 export interface IInvoice extends Document {
-  owner: mongoose.Types.ObjectId | IUser;
+  owner: mongoose.Types.ObjectId 
   invoiceNumber: string;
   invoiceDate: Date;
   dueDate?: Date;

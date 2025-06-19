@@ -1,122 +1,168 @@
-const AppError = require("../utils/appError");
-const catchAsync = require("../utils/catchAsyncModule");
-const ApiFeatures = require("../utils/ApiFeatures"); // Assuming this utility handles filters correctly
-const mongoose = require('mongoose'); // Import mongoose for ObjectId validation
+// src/controllers/handleFactory.ts
+
+import { Request, Response, NextFunction } from 'express';
+import type { Model, Document, PopulateOptions, FilterQuery } from 'mongoose';
+// import AppError from "../utils/appError";
+import { catchAsync } from '../utils/catchAsyncModule';
+import { ApiFeatures } from '../utils/ApiFeatures';
+import { IUser } from '../models/UserModel'; // Assuming this path is correct for your User interface
+import mongoose, { Types } from 'mongoose'; // Import Types for ObjectId
+
+// Define a base interface for documents that are expected to have an 'owner' field.
+// All models passed to these factory functions (except maybe for superAdmin-only routes)
+// should extend this to ensure type safety for the 'owner' property in queries.
+interface IOwnedDocument extends Document {
+  owner: Types.ObjectId; // Owner is expected to be an ObjectId
+  // Add any other common fields required by your generic operations if necessary
+}
+
+// Extend the Express Request interface to include our custom 'user' property.
+// It's marked optional here (`?`) because the authentication middleware might not have run yet,
+// or for routes accessible without authentication. If your routes ALWAYS require authentication,
+// you can make it `user: IUser;` to simplify guards.
+interface AuthenticatedRequest extends Request {
+  user?: IUser;
+}
 
 /**
- * Generic factory handler for deleting a single document by ID and owner.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model (e.g., Customer, Product).
- * @returns {Function} An Express middleware function.
+ * Generic factory function to delete a single document by ID and owner.
+ * Ensures that only the owner or a superAdmin can delete their documents.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @returns {Function} Express middleware function.
  */
-exports.deleteOne = (Model) =>
-  catchAsync(async (req, res, next) => {
-    // Ensure the document belongs to the authenticated user before deleting
+export const deleteOne = <T extends IOwnedDocument>(Model: Model<T>): Function =>
+  catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    // Authentication guard: Ensure user is logged in and has an ID
+    if (!req.user || !req.user._id) {
+      return next(new AppError('Authentication required to perform this action.', 401));
+    }
+
+    // Attempt to delete the document by _id and owner
     const doc = await Model.findOneAndDelete({
-      _id: req.params.id,
-      owner: req.user._id // Crucial: Filter by owner, req.user._id is available here
+      _id: req.params.id as unknown as Types.ObjectId, // Explicitly cast req.params.id to ObjectId
+      owner: req.user._id as Types.ObjectId // Explicitly cast req.user._id to ObjectId
     });
 
     if (!doc) {
-      // If doc is not found, it means either the ID is wrong, or it doesn't belong to the user
-      return next(new AppError(`${Model.modelName} not found with Id ${req.params.id} or you do not have permission.`, 404));
+      return next(new AppError(`${Model.modelName} not found or unauthorized to delete.`, 404));
     }
 
-    res.status(200).json({
-      status: "success",
-      statusCode: 200,
-      message: `${Model.modelName} deleted successfully`,
-      data: null,
+    res.status(204).json({ // 204 No Content is standard for successful DELETE with no response body
+      status: 'success',
+      statusCode: 204,
+      message: `${Model.modelName} deleted successfully.`,
+      data: null // No data returned for 204
     });
   });
 
 /**
- * Generic factory handler for updating a single document by ID and owner.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model.
- * @returns {Function} An Express middleware function.
+ * Generic factory function to update a single document by ID and owner.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @returns {Function} Express middleware function.
  */
-exports.updateOne = (Model) =>
-  catchAsync(async (req, res, next) => {
-    // Ensure the document belongs to the authenticated user before updating
+export const updateOne = <T extends IOwnedDocument>(Model: Model<T>): Function =>
+  catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !req.user._id) {
+      return next(new AppError('Authentication required to perform this action.', 401));
+    }
+
     const doc = await Model.findOneAndUpdate(
       {
-        _id: req.params.id,
-        owner: req.user._id // Crucial: Filter by owner, req.user._id is available here
+        _id: req.params.id as unknown as Types.ObjectId, // Explicitly cast to ObjectId
+        owner: req.user._id as Types.ObjectId // Explicitly cast to ObjectId
       },
       req.body,
       {
-        new: true, // Return the updated document
+        new: true,           // Return the modified document rather than the original
         runValidators: true, // Run schema validators on update
+        context: 'query'     // Required for validators on update with some Mongoose versions
       }
     );
 
     if (!doc) {
-      // If doc is not found, it means either the ID is wrong, or it doesn't belong to the user
-      return next(new AppError(`${Model.modelName} not found with Id ${req.params.id} or you do not have permission.`, 404));
+      return next(new AppError(`${Model.modelName} not found or unauthorized to update.`, 404));
     }
 
-    res.status(200).json({ // Changed status to 200 for successful update
-      status: "success",
+    res.status(200).json({
+      status: 'success',
       statusCode: 200,
-      data: doc,
+      data: doc
     });
   });
 
 /**
- * Generic factory handler for creating a new document, assigning the current user as owner.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model.
- * @returns {Function} An Express middleware function.
+ * Generic factory function to create a new document, automatically assigning the owner.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @returns {Function} Express middleware function.
  */
-exports.newOne = (Model) =>
-  catchAsync(async (req, res, next) => {
-    // The owner is ALWAYS the authenticated user creating the document.
-    // Super admins cannot override this via req.body.owner for creation.
-    const ownerIdToAssign = req.user._id;
+export const newOne = <T extends IOwnedDocument>(Model: Model<T>): Function =>
+  catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!req.user || !req.user._id) {
+      return next(new AppError('Authentication required to create this resource.', 401));
+    }
 
+    // Create the document, spreading req.body and adding the owner from the authenticated user
     const doc = await Model.create({
-      ...req.body, // Spread existing request body
-      owner: ownerIdToAssign // Crucial: Assign the owner, req.user._id is available here
+      ...req.body,
+      owner: req.user._id as Types.ObjectId // Explicitly cast to ObjectId
     });
 
     if (!doc) {
-      return next(new AppError(`Failed to create ${Model.modelName}`, 400));
+      // This case is less likely if `Model.create` throws an error on failure,
+      // but it's good defensive programming.
+      return next(new AppError(`Failed to create ${Model.modelName}.`, 400));
     }
 
-    res.status(201).json({
-      status: "success",
-      statusCode: 200,
-      data: doc, // Directly return the doc, no need for nested `data` object
+    res.status(201).json({ // 201 Created is the correct status code for successful creation
+      status: 'success',
+      statusCode: 201,
+      data: doc
     });
   });
 
 /**
- * Generic factory handler for getting a single document by ID and owner.
- * Allows super admins to get any document, otherwise gets by ID and owner.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model.
- * @param {string|object} [autoPopulateOptions] Options for Mongoose populate.
- * @returns {Function} An Express middleware function.
+ * Generic factory function to get a single document by ID.
+ * Supports optional population and checks for owner or superAdmin role.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @param {string | PopulateOptions | (string | PopulateOptions)[]} [autoPopulateOptions] - Optional fields to populate.
+ * @returns {Function} Express middleware function.
  */
-exports.getOne = (Model, autoPopulateOptions) =>
-  catchAsync(async (req, res, next) => {
-    const userId = req.user._id;
-    const isSuperAdmin = req.user.role === 'superAdmin';
+export const getOne = <T extends IOwnedDocument>( // T must extend IOwnedDocument for 'owner' filter
+  Model: Model<T>,
+  autoPopulateOptions?: string | PopulateOptions | (string | PopulateOptions)[]
+): Function =>
+  catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const isSuperAdmin = req.user?.role === 'superAdmin';
 
-    let filter = { _id: req.params.id };
+    // Authentication guard: For non-superAdmins, user and _id must exist
+    if (!isSuperAdmin && (!req.user || !req.user._id)) {
+      return next(new AppError('Authentication required to access this resource.', 401));
+    }
+
+    // Build the filter query. Use mongoose.FilterQuery for better type safety.
+    const filter: FilterQuery<T> = { _id: req.params.id as unknown as Types.ObjectId };
+
     if (!isSuperAdmin) {
-      filter.owner = userId; // Add owner filter if not super admin
+      // If not a superAdmin, restrict access to documents owned by the current user
+      filter.owner = req.user?._id as Types.ObjectId; // Now safe because T extends IOwnedDocument
     }
 
     let query = Model.findOne(filter);
 
+    // Apply population if options are provided
     if (autoPopulateOptions) {
-      query = query.populate(autoPopulateOptions);
+      if (typeof autoPopulateOptions === 'string') {
+        query = query.populate({ path: autoPopulateOptions });
+      } else if (Array.isArray(autoPopulateOptions)) {
+        // Map string paths in array to { path: string } objects for populate
+        const normalizedPopulateOptions = autoPopulateOptions.map(option =>
+          typeof option === 'string' ? { path: option } : option
+        );
+        query = query.populate(normalizedPopulateOptions as (string | PopulateOptions)[]);
+      } else {
+        // It's already a PopulateOptions object
+        query = query.populate(autoPopulateOptions);
+      }
     }
 
     const doc = await query;
@@ -124,247 +170,233 @@ exports.getOne = (Model, autoPopulateOptions) =>
     if (!doc) {
       return next(
         new AppError(
-          `${Model.modelName} not found with Id ${req.params.id}` +
-          (!isSuperAdmin ? ' or you do not have permission.' : '.'), // Clarify message for non-admins
+          `${Model.modelName} not found${isSuperAdmin ? '.' : ' or unauthorized.'}`,
           404
         )
       );
     }
 
     res.status(200).json({
-      status: "success",
+      status: 'success',
       statusCode: 200,
-      data: doc,
+      data: doc
     });
   });
 
 /**
- * Generic factory handler for getting all documents.
- * Allows super admins to get all documents across all owners, otherwise gets documents for the current user.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model.
- * @returns {Function} An Express middleware function.
+ * Generic factory function to get all documents.
+ * Filters by owner for regular users, allows superAdmins to see all.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @returns {Function} Express middleware function.
  */
-exports.getAll = (Model) =>
-  catchAsync(async (req, res, next) => {
-    console.log(req.user.role)
+export const getAll = <T extends IOwnedDocument>(Model: Model<T>): Function => // T must extend IOwnedDocument
+  catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+    const isSuperAdmin = req.user?.role === 'superAdmin';
 
-    const userId = req.user._id;
-    const isSuperAdmin = req.user.role === 'superAdmin';
-
-    let baseFilter = {}; // Default to empty filter for super admin
-    if (!isSuperAdmin) {
-      baseFilter = { owner: userId }; // Apply owner filter for regular users
+    // Authentication guard: If not superAdmin, user and _id must exist
+    if (!isSuperAdmin && (!req.user || !req.user._id)) {
+      throw new AppError('Authentication required to list resources.', 401);
     }
 
-    // Combine base filter (owner or no owner) with additional filters from query
-    // This combinedFilter is now the *only* filter passed to ApiFeatures' queryString
+    // Build the base filter: empty for superAdmin, owner-specific for others
+    const baseFilter: FilterQuery<T> = isSuperAdmin ? {} : { owner: req.user?._id as Types.ObjectId };
+
+    // Combine base filter with query parameters from the request
+    // This allows client-side filtering while respecting ownership.
     const combinedFilter = {
       ...baseFilter,
-      ...req.query, // Filters from URL query params (e.g., /api/products?status=active)
+      ...req.query
     };
 
-    // MODIFIED LINE: Pass Model.find() without initial filter,
-    // and let ApiFeatures handle the full filter construction.
-    const features = new ApiFeatures(Model.find(), combinedFilter)
-      .filter() // ApiFeatures will now apply the combinedFilter
+    // Apply API features (filtering, sorting, limiting fields, pagination)
+    const features = new ApiFeatures<T>(Model.find(), combinedFilter)
+      .filter()
       .sort()
       .limitFields()
       .paginate();
 
-    const docs = await features.query;
+    const docs = await features.query; // Execute the query
 
     res.status(200).json({
-      status: "success",
+      status: 'success',
       statusCode: 200,
       results: docs.length,
-      data: docs,
+      data: docs
     });
   });
 
 /**
- * Generic factory handler for deleting multiple documents by IDs.
- * Allows super admins to delete any documents matching the IDs, otherwise deletes documents matching IDs and owner.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model.
- * @returns {Function} An Express middleware function.
+ * Generic factory function to delete multiple documents by IDs.
+ * Supports deletion by owner or by superAdmin.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @returns {Function} Express middleware function.
  */
-exports.deleteMultipleProduct = (Model) => // Recommend renaming this to `deleteMany` for generality
-  catchAsync(async (req, res, next) => {
-    const ids = req.body.ids;
-    const userId = req.user._id;
-    const isSuperAdmin = req.user.role === 'superAdmin';
-    if (!ids || !Array.isArray(ids) || ids.length === 0) {
-      return next(new AppError("No valid IDs provided for deletion.", 400));
+export const deleteMultiple = <T extends IOwnedDocument>(Model: Model<T>): Function =>
+  catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const { ids } = req.body;
+    const userId = req.user?._id;
+    const isSuperAdmin = req.user?.role === 'superAdmin';
+
+    // Authentication guard
+    if (!isSuperAdmin && (!req.user || !userId)) {
+      return next(new AppError('Authentication required to delete multiple resources.', 401));
     }
 
-    const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
-    if (validIds.length === 0) {
-      return next(new AppError("No valid IDs provided.", 400));
+    // Input validation for 'ids'
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return next(new AppError('No valid IDs provided for deletion.', 400));
     }
 
-    let filter = { _id: { $in: validIds } };
+    // Filter and convert IDs to Mongoose ObjectIds
+    const validIds = ids.filter((id: string) => mongoose.Types.ObjectId.isValid(id)).map((id: string) => new Types.ObjectId(id));
+    if (!validIds.length) {
+      return next(new AppError('No valid ObjectIds provided.', 400));
+    }
+
+    // Build the filter for deletion
+    const filter: FilterQuery<T> = { _id: { $in: validIds } };
     if (!isSuperAdmin) {
-      filter.owner = userId; // Add owner filter if not super admin
+      filter.owner = userId as Types.ObjectId; // Apply owner filter if not superAdmin
     }
 
     const result = await Model.deleteMany(filter);
 
     if (result.deletedCount === 0) {
-      // Clarify message for non-admins
-      const message = `No ${Model.modelName}s found with the provided IDs` +
-                      (!isSuperAdmin ? ' for your account.' : '.');
-      return next(new AppError(message, 404));
+      return next(
+        new AppError(`No ${Model.modelName}s found matching the criteria or unauthorized.`, 404)
+      );
     }
 
-    res.status(200).json({
-      status: "success",
+    res.status(200).json({ // 200 OK is fine for deleteMany, 204 if no body
+      status: 'success',
       statusCode: 200,
-      message: `${result.deletedCount} ${Model.modelName}s deleted successfully.`,
+      message: `${result.deletedCount} ${Model.modelName}(s) deleted successfully.`,
+      data: null // Typically no data for deleteMany success
     });
   });
 
 /**
- * Generic factory handler for fetching dropdown data (select fields).
- * Allows super admins to fetch dropdown data across all owners, otherwise fetches data for the current user.
- * Requires the 'protect' middleware to run before this handler in the route.
- *
- * @param {Mongoose.Model} Model The Mongoose model.
- * @param {string[]} fields An array of field names to select (e.g., ['name', 'code']).
- * @returns {Function} An Express middleware function.
+ * Generic factory function to fetch data for dropdowns (e.g., ID and name fields).
+ * Filters by owner for regular users, allows superAdmins to see all.
+ * Does NOT populate by default.
+ * @param {Model<T>} Model - The Mongoose Model to operate on.
+ * @param {string[]} fields - An array of field names to include in the dropdown data (e.g., ['name', 'code']).
+ * @returns {Function} Express middleware function.
  */
-exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req, res, next) => {
-  const userId = req.user._id;
-  const isSuperAdmin = req.user.role === 'superAdmin';
+export const getModelDropdownWithoutStatus = <T extends IOwnedDocument>( // T must extend IOwnedDocument
+  Model: Model<T>,
+  fields: string[]
+): Function =>
+  catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    const isSuperAdmin = req.user?.role === 'superAdmin';
 
-  try {
-    let filter = {};
-    if (!isSuperAdmin) {
-      filter.owner = userId; 
+    // Authentication guard
+    if (!isSuperAdmin && (!req.user || !req.user._id)) {
+      return next(new AppError('Authentication required to fetch dropdown data.', 401));
     }
-    const documents = await Model.find(filter)
-      .select(fields.join(' ') + ' _id')
-      .lean();
-    res.status(200).json({
-      status: 'success',
-      statusCode: 200,
-      results: documents.length,
-      data: { dropdown: documents },
-    });
-  } catch (error) {
-    console.error("Error fetching dropdown data:", error);
-    return next(new AppError('Failed to fetch dropdown data', 500));
-  }
-});
 
+    // Build the filter: empty for superAdmin, owner-specific for others
+    const filter: FilterQuery<T> = {};
+    if (!isSuperAdmin) {
+      filter.owner = req.user?._id as Types.ObjectId; // Apply owner filter
+    }
 
-// const AppError = require("../utils/appError");
-// const catchAsync = require("../utils/catchAsyncModule");
-// const ApiFeatures = require("../utils/ApiFeatures"); // Assuming this utility handles filters correctly
-// const mongoose = require('mongoose'); // Import mongoose for ObjectId validation
+    try {
+      // Ensure _id is always included and combine with specified fields
+      const selectFields = new Set([...fields, '_id']);
+      const docs = await Model.find(filter)
+        .select(Array.from(selectFields).join(' ')) // Select only specified fields
+        .lean(); // Return plain JavaScript objects instead of Mongoose documents
 
-// /**
-//  * Generic factory handler for deleting a single document by ID.
-//  * Allows super admins to delete any document, otherwise deletes by ID and owner.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model (e.g., Customer, Product).
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.deleteOne = (Model) =>
-//   catchAsync(async (req, res, next) => {
-//     const userId = req.user._id;
-//     const isSuperAdmin = req.user.role === 'superAdmin';
+      res.status(200).json({
+        status: 'success',
+        statusCode: 200,
+        results: docs.length,
+        data: { dropdown: docs }
+      });
+    } catch (err: unknown) { // Use 'unknown' for catch clause for better safety
+      console.error("Error fetching dropdown data:", err);
+      // Provide a more informative error message
+      return next(new AppError(`Failed to fetch dropdown data: ${(err instanceof Error ? err.message : 'Unknown error')}`, 500));
+    }
+  });
+// import { Request, Response, NextFunction } from 'express';
+// import type { Model, Document, PopulateOptions } from 'mongoose'; // Use type import for better performance
+// import AppError from "../utils/appError";
+// import { catchAsync } from '../utils/catchAsyncModule';
+// import { ApiFeatures } from '../utils/ApiFeatures';
+// import { IUser } from '../models/UserModel';
+// import mongoose from 'mongoose'; // Added for ObjectId.isValid and FilterQuery
 
-//     let filter = { _id: req.params.id };
-//     if (!isSuperAdmin) {
-//       filter.owner = userId; // Add owner filter if not super admin
+// interface AuthenticatedRequest extends Request {
+//   user?: IUser; // 'user' is optional here because the 'protect' middleware might not always run first,
+//                 // or super admins might not have a user tied to req for certain ops (less common).
+//                 // If 'protect' always runs, make it `user: IUser;`.
+// }
+
+// export const deleteOne = <T extends Document>(Model: Model<T>) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+//     // Ensure req.user._id exists before using it in the query.
+//     // In a real protected route, req.user is guaranteed, but TypeScript needs guarding if 'user' is optional.
+//     if (!req.user?._id) {
+//       return next(new AppError('Authentication required to perform this action.', 401));
 //     }
 
-//     const doc = await Model.findOneAndDelete(filter);
+//     const doc = await Model.findOneAndDelete({
+//       _id: req.params.id,
+//       owner: req.user._id // Now safe to use req.user._id
+//     });
 
 //     if (!doc) {
-//       return next(
-//         new AppError(
-//           `${Model.modelName} not found with Id ${req.params.id}` +
-//           (!isSuperAdmin ? ' or you do not have permission.' : '.'), // Clarify message for non-admins
-//           404
-//         )
-//       );
+//       return next(new AppError(`${Model.modelName} not found or unauthorized.`, 404));
 //     }
 
 //     res.status(200).json({
-//       status: "success",
+//       status: 'success',
 //       statusCode: 200,
-//       message: `${Model.modelName} deleted successfully`,
-//       data: null,
+//       message: `${Model.modelName} deleted successfully.`,
+//       data: null
 //     });
 //   });
 
-// /**
-//  * Generic factory handler for updating a single document by ID.
-//  * Allows super admins to update any document, otherwise updates by ID and owner.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model.
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.updateOne = (Model) =>
-//   catchAsync(async (req, res, next) => {
-//     const userId = req.user._id;
-//     const isSuperAdmin = req.user.role === 'superAdmin';
-
-//     let filter = { _id: req.params.id };
-//     if (!isSuperAdmin) {
-//       filter.owner = userId; // Add owner filter if not super admin
+// export const updateOne = <T extends Document>(Model: Model<T>) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+//     if (!req.user?._id) {
+//       return next(new AppError('Authentication required to perform this action.', 401));
 //     }
 
 //     const doc = await Model.findOneAndUpdate(
-//       filter,
+//       {
+//         _id: req.params.id,
+//         owner: req.user._id
+//       },
 //       req.body,
 //       {
-//         new: true, // Return the updated document
-//         runValidators: true, // Run schema validators on update
+//         new: true,
+//         runValidators: true
 //       }
 //     );
 
 //     if (!doc) {
-//       return next(
-//         new AppError(
-//           `${Model.modelName} not found with Id ${req.params.id}` +
-//           (!isSuperAdmin ? ' or you do not have permission.' : '.'), // Clarify message for non-admins
-//           404
-//         )
-//       );
+//       return next(new AppError(`${Model.modelName} not found or unauthorized.`, 404));
 //     }
 
 //     res.status(200).json({
-//       status: "success",
+//       status: 'success',
 //       statusCode: 200,
-//       data: doc,
+//       data: doc
 //     });
 //   });
 
-// /**
-//  * Generic factory handler for creating a new document, assigning the current user as owner.
-//  * The 'owner' field will ALWAYS be set to the ID of the user who initiated the creation (req.user._id),
-//  * regardless of their role. Super admins cannot assign ownership during creation.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model.
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.newOne = (Model) =>
-//   catchAsync(async (req, res, next) => {
-//     // The owner is ALWAYS the authenticated user creating the document.
-//     // Super admins cannot override this via req.body.owner for creation.
-//     const ownerIdToAssign = req.user._id;
+// export const newOne = <T extends Document>(Model: Model<T>) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+//     if (!req.user?._id) {
+//       return next(new AppError('Authentication required to perform this action.', 401));
+//     }
 
 //     const doc = await Model.create({
 //       ...req.body,
-//       owner: ownerIdToAssign // Assign the actual creator as the owner
+//       owner: req.user._id
 //     });
 
 //     if (!doc) {
@@ -372,35 +404,50 @@ exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req
 //     }
 
 //     res.status(201).json({
-//       status: "success",
-//       statusCode: 200,
-//       data: doc,
+//       status: 'success',
+//       statusCode: 201, // Changed to 201 Created for new resource
+//       data: doc
 //     });
 //   });
 
-// /**
-//  * Generic factory handler for getting a single document by ID.
-//  * Allows super admins to get any document, otherwise gets by ID and owner.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model.
-//  * @param {string|object} [autoPopulateOptions] Options for Mongoose populate.
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.getOne = (Model, autoPopulateOptions) =>
-//   catchAsync(async (req, res, next) => {
-//     const userId = req.user._id;
-//     const isSuperAdmin = req.user.role === 'superAdmin';
+// export const getOne = <T extends Document>(
+//   Model: Model<T>,
+//   // Kept the flexible type for autoPopulateOptions for convenience
+//   autoPopulateOptions?: string | PopulateOptions | (string | PopulateOptions)[]
+// ) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+//     const isSuperAdmin = req.user?.role === 'superAdmin';
 
-//     let filter = { _id: req.params.id };
+//     // Guard against undefined req.user for non-superAdmin access if user is optional
+//     if (!isSuperAdmin && !req.user?._id) {
+//       return next(new AppError('Authentication required to access this resource.', 401));
+//     }
+
+//     const filter: any = { _id: req.params.id };
 //     if (!isSuperAdmin) {
-//       filter.owner = userId; // Add owner filter if not super admin
+//       filter.owner = req.user?._id; // Filter by owner if not super admin
 //     }
 
 //     let query = Model.findOne(filter);
 
 //     if (autoPopulateOptions) {
-//       query = query.populate(autoPopulateOptions);
+//       // --- FIX STARTS HERE ---
+//       // Mongoose populate can take a string for simple paths, but its TS definition
+//       // prefers PopulateOptions object or an array of them for more complex scenarios.
+//       // We'll normalize string inputs to PopulateOptions objects if needed.
+//       if (typeof autoPopulateOptions === 'string') {
+//         query = query.populate({ path: autoPopulateOptions });
+//       } else if (Array.isArray(autoPopulateOptions)) {
+//         // Map string paths in array to { path: string } objects
+//         const normalizedPopulateOptions = autoPopulateOptions.map(option =>
+//           typeof option === 'string' ? { path: option } : option
+//         );
+//         query = query.populate(normalizedPopulateOptions as (string | PopulateOptions)[]); // Cast back for TS compliance
+//       } else {
+//         // It's already a PopulateOptions object
+//         query = query.populate(autoPopulateOptions);
+//       }
+//       // --- FIX ENDS HERE ---
 //     }
 
 //     const doc = await query;
@@ -408,47 +455,39 @@ exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req
 //     if (!doc) {
 //       return next(
 //         new AppError(
-//           `${Model.modelName} not found with Id ${req.params.id}` +
-//           (!isSuperAdmin ? ' or you do not have permission.' : '.'), // Clarify message for non-admins
+//           `${Model.modelName} not found${isSuperAdmin ? '.' : ' or unauthorized.'}`,
 //           404
 //         )
 //       );
 //     }
 
 //     res.status(200).json({
-//       status: "success",
+//       status: 'success',
 //       statusCode: 200,
-//       data: doc,
+//       data: doc
 //     });
 //   });
 
-// /**
-//  * Generic factory handler for getting all documents.
-//  * Allows super admins to get all documents across all owners, otherwise gets documents for the current user.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model.
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.getAll = (Model) =>
-//   catchAsync(async (req, res, next) => {
-//     console.log(req.user.role)
+// export const getAll = <T extends Document>(Model: Model<T>) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+//     const isSuperAdmin = req.user?.role === 'superAdmin';
 
-//     const userId = req.user._id;
-//     const isSuperAdmin = req.user.role === 'superAdmin';
-
-//     let baseFilter = {}; // Default to empty filter for super admin
-//     if (!isSuperAdmin) {
-//       baseFilter = { owner: userId }; // Apply owner filter for regular users
+//     // Guard against undefined req.user for non-superAdmin access
+//     if (!isSuperAdmin && !req.user?._id) {
+//       // If we don't have a user and it's not a super admin, they can't access
+//       throw new AppError('Authentication required to list resources.', 401);
 //     }
 
-//     // Combine base filter (owner or no owner) with additional filters from query
+//     const baseFilter: mongoose.FilterQuery<T> = isSuperAdmin ? {} : { owner: req.user?._id }; // req.user._id is now safely used after guard
+
+//     // Note: The order here matters. req.query should generally come first if you want its filters
+//     // to potentially be overridden or combined with baseFilter.
 //     const combinedFilter = {
-//       ...baseFilter,
-//       ...req.query, // Filters from URL query params (e.g., /api/products?status=active)
+//       ...baseFilter, // Start with owner filter (or empty for super admin)
+//       ...req.query   // Add/override with client-provided query parameters
 //     };
 
-//     const features = new ApiFeatures(Model.find(combinedFilter), combinedFilter)
+//     const features = new ApiFeatures(Model.find(), combinedFilter)
 //       .filter()
 //       .sort()
 //       .limitFields()
@@ -457,171 +496,143 @@ exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req
 //     const docs = await features.query;
 
 //     res.status(200).json({
-//       status: "success",
+//       status: 'success',
 //       statusCode: 200,
 //       results: docs.length,
-//       data: docs,
+//       data: docs
 //     });
 //   });
 
-// /**
-//  * Generic factory handler for deleting multiple documents by IDs.
-//  * Allows super admins to delete any documents matching the IDs, otherwise deletes documents matching IDs and owner.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model.
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.deleteMultipleProduct = (Model) => // Recommend renaming this to `deleteMany` for generality
-//   catchAsync(async (req, res, next) => {
-//     const ids = req.body.ids;
-//     const userId = req.user._id;
-//     const isSuperAdmin = req.user.role === 'superAdmin';
-//     if (!ids || !Array.isArray(ids) || ids.length === 0) {
-//       return next(new AppError("No valid IDs provided for deletion.", 400));
+// export const deleteMultiple = <T extends Document>(Model: Model<T>) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+//     const { ids } = req.body;
+//     const userId = req.user?._id;
+//     const isSuperAdmin = req.user?.role === 'superAdmin';
+
+//     // Guard against undefined req.user for non-superAdmin access
+//     if (!isSuperAdmin && !userId) {
+//       return next(new AppError('Authentication required to delete multiple resources.', 401));
 //     }
 
-//     const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
-//     if (validIds.length === 0) {
-//       return next(new AppError("No valid IDs provided.", 400));
+//     if (!Array.isArray(ids) || ids.length === 0) {
+//       return next(new AppError('No valid IDs provided for deletion.', 400));
 //     }
 
-//     let filter = { _id: { $in: validIds } };
-//     if (!isSuperAdmin) {
-//       filter.owner = userId; // Add owner filter if not super admin
+//     // Filter out any invalid ObjectId strings
+//     const validIds = ids.filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+//     if (!validIds.length) {
+//       return next(new AppError('No valid ObjectIds provided.', 400));
 //     }
+
+//     const filter: mongoose.FilterQuery<T> = { _id: { $in: validIds } };
+//     if (!isSuperAdmin) filter.owner = userId; // Apply owner filter
 
 //     const result = await Model.deleteMany(filter);
-
 //     if (result.deletedCount === 0) {
-//       // Clarify message for non-admins
-//       const message = `No ${Model.modelName}s found with the provided IDs` +
-//                       (!isSuperAdmin ? ' for your account.' : '.');
-//       return next(new AppError(message, 404));
+//       return next(
+//         new AppError(`No ${Model.modelName}s found or unauthorized.`, 404)
+//       );
 //     }
-
-//     res.status(200).json({
-//       status: "success",
-//       statusCode: 200,
-//       message: `${result.deletedCount} ${Model.modelName}s deleted successfully.`,
-//     });
-//   });
-
-// /**
-//  * Generic factory handler for fetching dropdown data (select fields).
-//  * Allows super admins to fetch dropdown data across all owners, otherwise fetches data for the current user.
-//  * Requires the 'protect' middleware to run before this handler in the route.
-//  *
-//  * @param {Mongoose.Model} Model The Mongoose model.
-//  * @param {string[]} fields An array of field names to select (e.g., ['name', 'code']).
-//  * @returns {Function} An Express middleware function.
-//  */
-// exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req, res, next) => {
-//   const userId = req.user._id;
-//   const isSuperAdmin = req.user.role === 'superAdmin';
-
-//   try {
-//     let filter = {}; // Default to empty filter for super admin
-//     if (!isSuperAdmin) {
-//       filter.owner = userId; // Apply owner filter for regular users
-//     }
-
-//     const documents = await Model.find(filter)
-//       .select(fields.join(' ') + ' _id')
-//       .lean();
 
 //     res.status(200).json({
 //       status: 'success',
 //       statusCode: 200,
-//       results: documents.length,
-//       data: { dropdown: documents },
+//       message: `${result.deletedCount} ${Model.modelName}(s) deleted.`,
+//       data: null // Typically no data on successful deleteMany
 //     });
-//   } catch (error) {
-//     console.error("Error fetching dropdown data:", error);
-//     return next(new AppError('Failed to fetch dropdown data', 500));
-//   }
-// });
+//   });
 
-// // const AppError = require("../utils/appError");
-// // const catchAsync = require("../utils/catchAsyncModule");
-// // const ApiFeatures = require("../utils/ApiFeatures"); // Assuming this utility handles filters correctly
-// // const mongoose = require('mongoose'); // Import mongoose for ObjectId validation
+// export const getModelDropdownWithoutStatus = <T extends Document>(
+//   Model: Model<T>,
+//   fields: string[]
+// ) =>
+//   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+//     const isSuperAdmin = req.user?.role === 'superAdmin';
 
-// // /**
-// //  * Generic factory handler for deleting a single document by ID and owner.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model (e.g., Customer, Product).
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.deleteOne = (Model) =>
-// //   catchAsync(async (req, res, next) => {
-// //     // Ensure the document belongs to the authenticated user before deleting
+//     // Guard against undefined req.user for non-superAdmin access
+//     if (!isSuperAdmin && !req.user?._id) {
+//       return next(new AppError('Authentication required to fetch dropdown data.', 401));
+//     }
+
+//     const filter: mongoose.FilterQuery<T> = {};
+//     if (!isSuperAdmin) filter.owner = req.user?._id; // Apply owner filter
+
+//     try {
+//       // Ensure _id is always included for dropdowns
+//       const selectFields = new Set([...fields, '_id']);
+//       const docs = await Model.find(filter).select(Array.from(selectFields).join(' ')).lean();
+
+//       res.status(200).json({
+//         status: 'success',
+//         statusCode: 200,
+//         results: docs.length,
+//         data: { dropdown: docs }
+//       });
+//     } catch (err: any) { // Catch potential Mongoose errors during find/select
+//       console.error("Error fetching dropdown data:", err);
+//       return next(new AppError(`Failed to fetch dropdown data: ${err.message || 'Unknown error'}`, 500));
+//     }
+//   });
+// // import { Request, Response, NextFunction } from 'express';
+// // import type { Model, Document, PopulateOptions } from 'mongoose';
+// // import AppError from "../utils/appError";
+// // import { catchAsync } from '../utils/catchAsyncModule';
+// // import { ApiFeatures } from '../utils/ApiFeatures';
+// // import { IUser } from '../models/UserModel';
+
+// // interface AuthenticatedRequest extends Request {
+// //   user?: IUser;
+// // }
+
+// // export const deleteOne = <T extends Document>(Model: Model<T>) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
 // //     const doc = await Model.findOneAndDelete({
 // //       _id: req.params.id,
-// //       owner: req.user._id // Crucial: Filter by owner, req.user._id is available here
+// //       owner: req.user?._id
 // //     });
 
 // //     if (!doc) {
-// //       // If doc is not found, it means either the ID is wrong, or it doesn't belong to the user
-// //       return next(new AppError(`${Model.modelName} not found with Id ${req.params.id} or you do not have permission.`, 404));
+// //       return next(new AppError(`${Model.modelName} not found or unauthorized.`, 404));
 // //     }
 
 // //     res.status(200).json({
-// //       status: "success",
+// //       status: 'success',
 // //       statusCode: 200,
-// //       message: `${Model.modelName} deleted successfully`,
-// //       data: null,
+// //       message: `${Model.modelName} deleted successfully.`,
+// //       data: null
 // //     });
 // //   });
 
-// // /**
-// //  * Generic factory handler for updating a single document by ID and owner.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model.
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.updateOne = (Model) =>
-// //   catchAsync(async (req, res, next) => {
-// //     // Ensure the document belongs to the authenticated user before updating
+// // export const updateOne = <T extends Document>(Model: Model<T>) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
 // //     const doc = await Model.findOneAndUpdate(
 // //       {
 // //         _id: req.params.id,
-// //         owner: req.user._id // Crucial: Filter by owner, req.user._id is available here
+// //         owner: req.user?._id
 // //       },
 // //       req.body,
 // //       {
-// //         new: true, // Return the updated document
-// //         runValidators: true, // Run schema validators on update
+// //         new: true,
+// //         runValidators: true
 // //       }
 // //     );
 
 // //     if (!doc) {
-// //       // If doc is not found, it means either the ID is wrong, or it doesn't belong to the user
-// //       return next(new AppError(`${Model.modelName} not found with Id ${req.params.id} or you do not have permission.`, 404));
+// //       return next(new AppError(`${Model.modelName} not found or unauthorized.`, 404));
 // //     }
 
-// //     res.status(200).json({ // Changed status to 200 for successful update
-// //       status: "success",
+// //     res.status(200).json({
+// //       status: 'success',
 // //       statusCode: 200,
-// //       data: doc,
+// //       data: doc
 // //     });
 // //   });
 
-// // /**
-// //  * Generic factory handler for creating a new document, assigning the current user as owner.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model.
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.newOne = (Model) =>
-// //   catchAsync(async (req, res, next) => {
-// //     // Create new document, automatically assigning the authenticated user as owner
+// // export const newOne = <T extends Document>(Model: Model<T>) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
 // //     const doc = await Model.create({
-// //       ...req.body, // Spread existing request body
-// //       owner: req.user._id // Crucial: Assign the owner, req.user._id is available here
+// //       ...req.body,
+// //       owner: req.user?._id
 // //     });
 
 // //     if (!doc) {
@@ -629,76 +640,54 @@ exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req
 // //     }
 
 // //     res.status(201).json({
-// //       status: "success",
+// //       status: 'success',
 // //       statusCode: 200,
-// //       data: doc, // Directly return the doc, no need for nested `data` object
+// //       data: doc
 // //     });
 // //   });
 
-// // /**
-// //  * Generic factory handler for getting a single document by ID and owner.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model.
-// //  * @param {string|object} [autoPopulateOptions] Options for Mongoose populate.
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.getOne = (Model, autoPopulateOptions) =>
-// //   catchAsync(async (req, res, next) => {
-// //     // Build query to find document by ID AND ensure it belongs to the authenticated user
-// //     let query = Model.findOne({
-// //       _id: req.params.id,
-// //       owner: req.user._id // Crucial: Filter by owner, req.user._id is available here
-// //     });
+// // export const getOne = <T extends Document>(
+// //   Model: Model<T>,
+// //   autoPopulateOptions?: string | PopulateOptions | (string | PopulateOptions)[]
+// // ) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+// //     const isSuperAdmin = req.user?.role === 'superAdmin';
+// //     const filter: any = { _id: req.params.id };
+// //     if (!isSuperAdmin) filter.owner = req.user?._id;
 
-// //     // Optional: Allow admin to bypass owner filter
-// //     // if (req.user.role === 'admin') {
-// //     //    query = Model.findById(req.params.id); // Admin can access any document by ID
-// //     // }
-
-// //     if (autoPopulateOptions) {
-// //       query = query.populate(autoPopulateOptions);
-// //     }
+// //     let query = Model.findOne(filter);
+// //     if (autoPopulateOptions) query = query.populate(autoPopulateOptions);
 
 // //     const doc = await query;
 
 // //     if (!doc) {
-// //       return next(new AppError(`${Model.modelName} not found with Id ${req.params.id} or you do not have permission.`, 404));
+// //       return next(
+// //         new AppError(
+// //           `${Model.modelName} not found${isSuperAdmin ? '.' : ' or unauthorized.'}`,
+// //           404
+// //         )
+// //       );
 // //     }
 
 // //     res.status(200).json({
-// //       status: "success",
+// //       status: 'success',
 // //       statusCode: 200,
-// //       data: doc,
+// //       data: doc
 // //     });
 // //   });
 
-// // /**
-// //  * Generic factory handler for getting all documents for the authenticated user.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model.
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.getAll = (Model) => // Removed the `options` parameter here
-// //   catchAsync(async (req, res, next) => {
-// //     // Initial filter will always include the owner ID
-// //     let filter = { owner: req.user._id }; // req.user._id is available here
+// // export const getAll = <T extends Document>(Model: Model<T>) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response) => {
+// //     const isSuperAdmin = req.user?.role === 'superAdmin';
+// //     const baseFilter = isSuperAdmin ? {} : { owner: req.user?._id };
 
-// //     // Optional: Allow admin to bypass owner filter
-// //     // if (req.user.role === 'admin') {
-// //     //    filter = {}; // Admins can see all documents
-// //     // }
-
-// //     // Combine current user's filter with any additional filters from query
 // //     const combinedFilter = {
-// //       ...filter,
-// //       ...req.query, // Filters from URL query params (e.g., /api/products?name=Laptop)
-// //       // Removed `...req.body` as filters for GET requests typically come from query params
+// //       ...baseFilter,
+// //       ...req.query
 // //     };
 
-// //     const features = new ApiFeatures(Model.find(combinedFilter), combinedFilter) // Pass combinedFilter to ApiFeatures
-// //       .filter() // ApiFeatures should intelligently apply filters
+// //     const features = new ApiFeatures(Model.find(), combinedFilter)
+// //       .filter()
 // //       .sort()
 // //       .limitFields()
 // //       .paginate();
@@ -706,448 +695,64 @@ exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req
 // //     const docs = await features.query;
 
 // //     res.status(200).json({
-// //       status: "success",
+// //       status: 'success',
 // //       statusCode: 200,
 // //       results: docs.length,
-// //       data: docs,
+// //       data: docs
 // //     });
 // //   });
 
-// // /**
-// //  * Generic factory handler for deleting multiple documents by IDs and owner.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model.
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.deleteMultipleProduct = (Model) => // Consider renaming to `deleteMany` for generality
-// //   catchAsync(async (req, res, next) => {
-// //     const ids = req.body.ids;
-// //     const userId = req.user._id; // Get the authenticated user's ID
+// // export const deleteMultiple = <T extends Document>(Model: Model<T>) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+// //     const { ids } = req.body;
+// //     const userId = req.user?._id;
+// //     const isSuperAdmin = req.user?.role === 'superAdmin';
 
-// //     if (!ids || !Array.isArray(ids) || ids.length === 0) {
-// //       return next(new AppError("No valid IDs provided for deletion.", 400));
+// //     if (!Array.isArray(ids) || ids.length === 0) {
+// //       return next(new AppError('No valid IDs provided for deletion.', 400));
 // //     }
 
-// //     const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
-// //     if (validIds.length === 0) {
-// //       return next(new AppError("No valid IDs provided.", 400));
+// //     const validIds = ids.filter((id: string) => mongoose.Types.ObjectId.isValid(id));
+// //     if (!validIds.length) {
+// //       return next(new AppError('No valid ObjectIds.', 400));
 // //     }
 
-// //     // Delete documents by IDs AND ensure they belong to the current user
-// //     const result = await Model.deleteMany({
-// //       _id: { $in: validIds },
-// //       owner: userId // Crucial: Filter by owner
-// //     });
+// //     const filter: any = { _id: { $in: validIds } };
+// //     if (!isSuperAdmin) filter.owner = userId;
 
+// //     const result = await Model.deleteMany(filter);
 // //     if (result.deletedCount === 0) {
-// //       return next(new AppError(`No ${Model.modelName}s found for your account with the provided IDs.`, 404));
+// //       return next(
+// //         new AppError(`No ${Model.modelName}s found or unauthorized.`, 404)
+// //       );
 // //     }
-
-// //     res.status(200).json({
-// //       status: "success",
-// //       statusCode: 200,
-// //       message: `${result.deletedCount} ${Model.modelName}s deleted successfully.`,
-// //     });
-// //   });
-
-// // /**
-// //  * Generic factory handler for fetching dropdown data (select fields) for the authenticated user.
-// //  * Requires the 'protect' middleware to run before this handler in the route.
-// //  *
-// //  * @param {Mongoose.Model} Model The Mongoose model.
-// //  * @param {string[]} fields An array of field names to select (e.g., ['name', 'code']).
-// //  * @returns {Function} An Express middleware function.
-// //  */
-// // exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req, res, next) => {
-// //   const userId = req.user._id; // Get the authenticated user's ID
-// //   try {
-// //     // Find documents where the 'owner' field matches the authenticated user's ID
-// //     const documents = await Model.find({ owner: userId }) // Crucial: Filter by owner
-// //       .select(fields.join(' ') + ' _id') // Select specified fields and _id
-// //       .lean(); // Return plain JavaScript objects for performance
 
 // //     res.status(200).json({
 // //       status: 'success',
 // //       statusCode: 200,
-// //       results: documents.length,
-// //       data: { dropdown: documents },
+// //       message: `${result.deletedCount} ${Model.modelName}(s) deleted.`
 // //     });
-// //   } catch (error) {
-// //     console.error("Error fetching dropdown data:", error); // Log the actual error
-// //     return next(new AppError('Failed to fetch dropdown data', 500));
-// //   }
-// // });
+// //   });
 
-// // // const AppError = require("../utils/appError");
-// // // const catchAsync = require("../utils/catchAsyncModule");
-// // // const ApiFeatures = require("../utils/ApiFeatures");
+// // export const getModelDropdownWithoutStatus = <T extends Document>(
+// //   Model: Model<T>,
+// //   fields: string[]
+// // ) =>
+// //   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+// //     const isSuperAdmin = req.user?.role === 'superAdmin';
+// //     const filter: any = {};
+// //     if (!isSuperAdmin) filter.owner = req.user?._id;
 
-// // // exports.deleteOne = (Model) =>
-// // //   catchAsync(async (req, res, next) => {
-// // //     const doc = await Model.findByIdAndDelete(req.params.id);
-// // //     if (!doc) {
-// // //       return next(new AppError(`${Model} not found with Id`, 404));
-// // //     }
-// // //     res.status(200).json({
-// // //       status: "success",
-// // //       statusCode: 200,
-// // //       message: `${Model} deleted successfully`,
-// // //       data: null,
-// // //     });
-// // //   });
+// //     try {
+// //       const docs = await Model.find(filter).select([...fields, '_id'].join(' ')).lean();
 
-// // // exports.updateOne = (Model) =>
-// // //   catchAsync(async (req, res, next) => {
-// // //     const doc = await Model.findByIdAndUpdate(req.params.id, req.body, {
-// // //       new: true,
-// // //       runValidators: true,
-// // //     });
-// // //     if (!doc) {
-// // //       return next(new AppError(` ${Model} not found with Id ${req.params.id}`, 404));
-// // //     }
-// // //     res.status(201).json({
-// // //       status: "success",
-// // //       statusCode: 200,
-// // //       data: doc,
-// // //     });
-// // //   });
-
-// // // exports.newOne = (Model) =>
-// // //   catchAsync(async (req, res, next) => {
-// // //     const doc = await Model.create(req.body);
-// // //     if (!doc) {
-// // //       return next(new AppError(` Failed to create ${Model}`, 400));
-// // //     }
-// // //     res.status(201).json({
-// // //       status: "success",
-// // //       statusCode: 200,
-// // //       data: {
-// // //         data: doc,
-// // //       },
-// // //     });
-// // //   });
-
-// // // exports.getOne = (Model, autoPopulateOptions) =>
-// // //   catchAsync(async (req, res, next) => {
-// // //     let query = Model.findById(req.params.id);
-// // //     if (autoPopulateOptions) {
-// // //       query.populate(autoPopulateOptions);
-// // //     }
-// // //     const doc = await query;
-// // //     if (!doc) {
-// // //       return next(new AppError(`${Model} not found with Id`, 404));
-// // //     }
-// // //     res.status(200).json({
-// // //       status: "success",
-// // //       statusCode: 200,
-// // //       data: doc,
-// // //     });
-// // //   });
-
-// // // exports.getAll = (Model) =>
-// // //   catchAsync(async (req, res, next) => {
-// // //     // Combine query parameters and request body for filtering
-// // //     const filterParams = {
-// // //       ...req.query,
-// // //       ...req.body
-// // //     };
-
-// // //     const features = new ApiFeatures(Model.find(), filterParams)
-// // //       .filter()
-// // //       .sort()
-// // //       .limitFields()
-// // //       .paginate();
-// // //     const docs = await features.query;
-// // //     res.status(200).json({
-// // //       status: "success",
-// // //       statusCode: 200,
-// // //       results: docs.length,
-// // //       data: docs,
-// // //     });
-// // //   });
-// // // // utils/handleFactory.js
-
-// // // // exports.getAll = (Model, options = {}) =>
-// // // //   catchAsync(async (req, res, next) => {
-// // // //     const filterParams = {
-// // // //       ...req.query,
-// // // //       ...req.body
-// // // //     };
-
-// // // //     const features = new ApiFeatures(Model.find(), filterParams)
-// // // //       .filter()
-// // // //       .sort()
-// // // //       .limitFields()
-// // // //       .paginate();
-
-// // // //     let docs = await features.query;
-
-// // // //     // ✅ Optional post-processing hook (e.g., enrich customer data)
-// // // //     if (options.afterEach && typeof options.afterEach === 'function') {
-// // // //       docs = await Promise.all(
-// // // //         docs.map(async (doc) => await options.afterEach(doc))
-// // // //       );
-// // // //     }
-
-// // // //     res.status(200).json({
-// // // //       status: "success",
-// // // //       statusCode: 200,
-// // // //       results: docs.length,
-// // // //       data: docs,
-// // // //     });
-// // // //   });
-
-  
-// // // exports.deleteMultipleProduct = (Model) =>
-// // //   catchAsync(async (req, res, next) => {
-// // //     const ids = req.body.ids;
-// // //     if (!ids || !Array.isArray(ids) || ids.length === 0) {
-// // //       return next(new AppError("No valid IDs provided for deletion.", 400));
-// // //     }
-
-// // //     const validIds = ids.filter((id) => mongoose.Types.ObjectId.isValid(id));
-// // //     if (validIds.length === 0) {
-// // //       return next(new AppError("No valid IDs provided.", 400));
-// // //     }
-
-// // //     const result = await Model.deleteMany({ _id: { $in: validIds } });
-// // //     if (result.deletedCount === 0) {
-// // //       return next(new AppError(`No ${Model} found with the provided IDs.`, 404));
-// // //     }
-
-// // //     res.status(200).json({
-// // //       status: "success",
-// // //       statusCode: 200,
-// // //       message: `${result.deletedCount} ${Model} deleted successfully.`,
-// // //     });
-// // //   });
-
-// // // exports.getModelDropdownWithoutStatus = (Model, fields) => catchAsync(async (req, res, next) => {
-// // //   try {
-// // //     const documents = await Model.find()
-// // //       .select(fields.join(' ') + ' _id')
-// // //       .lean();
-
-// // //     res.status(200).json({
-// // //       status: 'success',
-// // //       statusCode: 200,
-// // //       results: documents.length,
-// // //       data: { dropdown: documents },
-// // //     });
-// // //   } catch (error) {
-// // //     return next(new AppError('Failed to fetch dropdown data', 500));
-// // //   }
-// // // });
-
-// // // // exports.deleteOne = (Model) =>
-// // // //   catchAsync(async (req, res, next) => {
-// // // //     const doc = await Model.findByIdAndDelete(req.params.id);
-// // // //     if (!doc) {
-// // // //       return next(new AppError(`${Model} not found with Id`, 404));
-// // // //     }
-// // // //     res.status(200).json({
-// // // //       Status: "success",
-// // // // statusCode: 200,
-// // // //       message: "Data deleted successfully",
-// // // //       data: null,
-// // // //     });
-// // // //   });
-
-// // // //   // exports.deleteMany = (Model) =>
-// // // //   // catchAsync(async (req, res, next) => {
-// // // //   //   try {
-// // // //   //     // 1. Get the IDs from the request (e.g., from the request body)
-// // // //   //     const idsToDelete = req.body.ids; // Assuming you send an array of IDs in the body
-// // // //   //     console.log(req.dody)
-
-// // // //   //     // 2. Validate the IDs (important!)
-// // // //   //     if (!idsToDelete || !Array.isArray(idsToDelete) || idsToDelete.length === 0) {
-// // // //   //       return next(new AppError("No IDs provided for deletion.", 400)); // Bad Request
-// // // //   //     }
-
-// // // //   //     // Convert string IDs to ObjectIds (if necessary)
-// // // //   //     const objectIds = idsToDelete.map(id => {
-// // // //   //       try {
-// // // //   //         return new mongoose.Types.ObjectId(id); // Attempt conversion
-// // // //   //       } catch (error) {
-// // // //   //         return null; // Handle invalid IDs
-// // // //   //       }
-// // // //   //     }).filter(id => id !== null); //remove null from array if any invalid id
-
-// // // //   //     if (objectIds.length !== idsToDelete.length) {
-// // // //   //       return next(new AppError("Invalid IDs provided for deletion.", 400));
-// // // //   //     }
-
-// // // //   //     // 3. Delete the documents using deleteMany
-// // // //   //     const result = await Model.deleteMany({ _id: { $in: objectIds } });
-
-// // // //   //     if (result.deletedCount === 0) {
-// // // //   //       return next(new AppError("No documents found with the provided IDs.", 404));
-// // // //   //     }
-
-// // // //   //     // 4. Send a success response
-// // // //   //     res.status(200).json({
-// // // //   //       status: "success",
-// // // // statusCode: 200,
-// // // //   //       message: `${result.deletedCount} documents deleted successfully.`,
-// // // //   //       data: null, // Important for security
-// // // //   //     });
-// // // //   //   } catch (err) {
-// // // //   //     next(err); // Pass any errors to the error handling middleware
-// // // //   //   }
-// // // //   // });
-
-
-// // // // exports.updateOne = (Model) =>
-// // // //   catchAsync(async (req, res, next) => {
-// // // //     const doc = await Model.findByIdAndUpdate(req.params.id, req.body);
-// // // //     if (!doc) {
-// // // //       return next(new AppError(`doc not found with Id ${req.params.id}`, 404));
-// // // //     }
-// // // //     res.status(201).json({
-// // // //       status: "Success",
-// // // // statusCode: 200,
-// // // //       data: doc,
-// // // //     });
-// // // //   });
-
-// // // // exports.newOne = (Model) =>
-// // // //   catchAsync(async (req, res, next) => {
-// // // //     console.log(req);
-// // // //     const doc = await Model.create(req.body);
-// // // //     if (!doc) {
-// // // //       return next(new AppError("Failed to create product", 400));
-// // // //     }
-// // // //     res.status(201).json({
-// // // //       status: "success",
-// // // // statusCode: 200,
-// // // //       data: {
-// // // //         data: doc,
-// // // //       },
-// // // //     });
-// // // //   });
-
-// // // // exports.getOne = (Model, autoPopulateOptions) => {
-// // // //   return catchAsync(async (req, res, next) => {
-// // // //     let query = Model.findById(req.params.id);
-// // // //     if (autoPopulateOptions) {
-// // // //       query.populate(autoPopulateOptions);
-// // // //     }
-// // // //     const doc = await query;
-// // // //     // const doc = await Model.findById(req.params.id).populate(autoPopulateOptions);;
-// // // //     if (!doc) {
-// // // //       return next(new AppError("doc not found with Id", 404));
-// // // //     }
-// // // //     res.status(200).json({
-// // // //       status: "success",
-// // // // statusCode: 200,
-// // // //       length: doc.length,
-// // // //       data: doc,
-// // // //     });
-// // // //   });
-// // // // };
-
-// // // // exports.getAll = (Model, autoPopulateOptions) => {
-// // // //   return catchAsync(async (req, res, next) => {
-// // // //     console.log(req);
-// // // //     // small hack for nested routing
-// // // //     let filter = {};
-// // // //     if (req.params.productId) filter = { product: req.params.productID };
-
-// // // //     if (autoPopulateOptions) {
-// // // //       feature = new ApiFeatures(
-// // // //         Model.find(filter).populate(autoPopulateOptions),
-// // // //         req.query
-// // // //       );
-// // // //     } else {
-// // // //       feature = new ApiFeatures(Model.find(), req.query);
-// // // //     }
-// // // //     const data = feature.filter().limitFields().sort().paginate();
-// // // //     const doc = await data.query;
-// // // //     // const doc = await data.query.explain();
-// // // //     res.status(200).json({
-// // // //       status: "success",
-// // // // statusCode: 200,
-// // // //       result: doc.length,
-// // // //       data: { doc },
-// // // //     });
-// // // //   });
-// // // // };
-
-// // // // exports.createList = (Model, keys) => {
-// // // //   return catchAsync(async (req, res, next) => {
-// // // //     let aggregationPipeline = [];
-
-// // // //     // Project stage (select only the specified keys/fields)
-// // // //     if (keys && Array.isArray(keys) && keys.length > 0) {
-// // // //       const projection = keys.reduce((acc, key) => {
-// // // //         acc[key] = 1; // Include the specified fields in the result
-// // // //         return acc;
-// // // //       }, {});
-// // // //       aggregationPipeline.push({ $project: projection });
-// // // //     }
-
-// // // //     // Execute the aggregation pipeline
-// // // //     const docs = await Model.aggregate(aggregationPipeline);
-
-// // // //     // If no documents are found
-// // // //     if (!docs || docs.length === 0) {
-// // // //       return next(new AppError("No documents found", 404));
-// // // //     }
-
-// // // //     // Respond with the results
-// // // //     res.status(200).json({
-// // // //       status: "success",
-// // // // statusCode: 200,
-// // // //       result: docs.length,
-// // // //       data: docs,
-// // // //     });
-// // // //   });
-// // // // };
-
-
-// // // // // exports.deleteMultipleProduct= (model) =>{
-// // // // //   return catchAsync(async (req, res, next) => {
-// // // // //     console.log(req.body,"------------------------------------------");
-// // // // //     // const result = await model.deleteMany({ _id: { $in: idsToDelete } });
-// // // // //     console.log(`${result.deletedCount} documents deleted successfully.`);
-// // // // //     console.error('Error deleting documents:', error);
-// // // // // })
-// // // // // }
-// // // // exports.deleteMultipleProduct = (model) => {
-// // // //   return catchAsync(async (req, res, next) => {
-// // // //     try {
-// // // //       const ids = req.body.ids;
-
-// // // //       // Validate that the IDs array is provided
-// // // //       if (!ids || !Array.isArray(ids) || ids.length === 0) {
-// // // //         return res.status(400).json({
-// // // //           status: "fail",
-// // // //
-// // // // statusCode:200,           message: "No valid IDs provided.",
-// // // //         });
-// // // //       }
-
-// // // //       // Use deleteMany to delete documents with the given IDs
-// // // //       const result = await model.deleteMany({ _id: { $in: ids } });
-
-// // // //       if (result.deletedCount > 0) {
-// // // //         return res.status(200).json({
-// // // //           status: "success",
-// // // // statusCode: 200,
-// // // //           message: `${result.deletedCount} documents deleted successfully.`,
-// // // //         });
-// // // //       } else {
-// // // //         return res.status(404).json({
-// // // //           status: "fail",
-// // // //
-// // // // statusCode:200,           message: "No documents found with the given IDs.",
-// // // //         });
-// // // //       }
-// // // //     } catch (error) {
-// // // //       console.error("Error deleting documents:", error);
-// // // //       next(error); // Pass error to global error handler
-// // // //     }
-// // // //   });
-// // // // };
+// //       res.status(200).json({
+// //         status: 'success',
+// //         statusCode: 200,
+// //         results: docs.length,
+// //         data: { dropdown: docs }
+// //       });
+// //     } catch (err) {
+// //       return next(new AppError('Failed to fetch dropdown data', 500));
+// //     }
+// //   });
