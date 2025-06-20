@@ -83,16 +83,16 @@ exports.getCustomerById = catchAsync(async (req:any, res:any, next:any) => {
   const userId = req.user._id;
   const customerId = req.params.id;
 
-  let customer = await Customer.findById(customerId);
-  if (!customer) return next(new AppError('Customer not found or you do not have permission.', 404));
+  let customerdata = await Customer.findById(customerId);
+  if (!customerdata) return next(new AppError('Customer not found or you do not have permission.', 404));
 
-  customer = await Customer.updateRemainingAmount(customer._id);
+  customerdata = await Customer.updateRemainingAmount(req.params.id);
   if (!customer) return next(new AppError('Failed to update remaining amount', 500));
 
   res.status(200).json({
     status: 'success',
     statusCode: 200,
-    data: customer,
+    data: customerdata,
   });
 });
 

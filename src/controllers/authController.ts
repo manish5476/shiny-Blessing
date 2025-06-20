@@ -121,7 +121,8 @@ export const login = catchAsync(async (req: Request, res: Response, next: NextFu
 
   const user = await User.findOne({ email }).select('+password');
 
-  if (!user || !(await user.correctPassword(password))) {
+  // Corrected: Pass both candidatePassword and userPassword (the hashed one from DB)
+  if (!user || !(await user.correctPassword(password, user.password))) {
     logger.warn(`Failed Login Attempt: Email: ${email}, IP: ${req.ip}`);
     return next(new AppError('Invalid email or password', 401));
   }
@@ -286,7 +287,7 @@ export const updateUserPassword = catchAsync(async (req: AuthenticatedRequest, r
     return next(new AppError('User not found. Please log in again.', 404));
   }
 
-  if (!(await user.correctPassword(req.body.currentPassword))) {
+  if (!(await user.correctPassword(req.body.currentPassword,user.password))) {
     return next(new AppError('Your current password is wrong.', 401));
   }
 
@@ -305,6 +306,58 @@ export const logout = (req: Request, res: Response, next: NextFunction) => {
   });
   res.status(200).json({ status: 'success' });
 };
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // import { promisify } from 'util';
 // import crypto from 'crypto';
