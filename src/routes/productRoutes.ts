@@ -20,16 +20,16 @@ router.use(protect);
 router.get('/', getAllProduct);
 router.get('/:id', getProductById);
 
-// Admin/staff-only routes
+// Admin/seller-only routes
 router
   .route('/')
-  .post(restrictTo('admin', 'staff'), findDuplicateProduct, newProduct)
-  .delete(restrictTo('admin', 'staff'), deleteMultipleProduct);
+  .post(restrictTo('admin', 'seller'), findDuplicateProduct, newProduct)
+  .delete(restrictTo('admin', 'seller'), deleteMultipleProduct);
 
 router
   .route('/:id')
-  .patch(restrictTo('admin', 'staff'), updateProduct)
-  .delete(restrictTo('admin', 'staff'), deleteProduct);
+  .patch(restrictTo('admin', 'seller'), updateProduct)
+  .delete(restrictTo('admin', 'seller'), deleteProduct);
 
 // Nested review routes
 router.use('/:productId/reviews', reviewRoutes);

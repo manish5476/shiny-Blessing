@@ -13,6 +13,7 @@ export const getPaymentById = handleFactory.getOne(Payment, { path: "reviews" })
 export const newPayment = handleFactory.newOne(Payment);
 export const deletePayment = handleFactory.deleteOne(Payment);
 export const updatePayment = handleFactory.updateOne(Payment);
+export const deleteMultiplePayment = handleFactory.deleteMultiple(Payment, true);
 
 
 // exports.newPayment = [

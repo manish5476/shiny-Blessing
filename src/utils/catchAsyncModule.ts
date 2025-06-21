@@ -1,6 +1,6 @@
 // src/utils/catchAsyncModule.ts
 
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, RequestHandler } from 'express';
 
 /**
  * Defines the type for an asynchronous Express middleware function.
@@ -19,13 +19,13 @@ export type AsyncHandler<Req extends Request = Request> = (
  *
  * @template Req - The type of the Express Request object that the wrapped function expects.
  * @param {AsyncHandler<Req>} fn - The asynchronous middleware function to wrap.
- * @returns {(req: Req, res: Response, next: NextFunction) => void} An Express middleware function.
+ * @returns {RequestHandler} An Express middleware function.
  */
-export const catchAsync = <Req extends Request = Request>(fn: AsyncHandler<Req>) => {
-  return (req: Req, res: Response, next: NextFunction) => {
+export const catchAsync = <Req extends Request = Request>(fn: AsyncHandler<Req>): RequestHandler => {
+  return (req: Request, res: Response, next: NextFunction) => {
     // Call the asynchronous function. If it resolves, fine. If it rejects, catch the error
     // and pass it to the next middleware in the chain (Express's error handler).
-    Promise.resolve(fn(req, res, next)).catch(next);
+    Promise.resolve(fn(req as Req, res, next)).catch(next);
   };
 };
 // // src/utils/catchAsyncModule.ts

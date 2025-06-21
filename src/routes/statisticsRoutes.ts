@@ -1,24 +1,17 @@
-// import express, { Router } from 'express';
-// import * as statisticsController from '../controllers/statisticsController';
-// import { protect, restrictTo } from '../controllers/authController';
+import express, { Router } from 'express';
+import { protect, restrictTo } from '../controllers/authController';
 
-// const router: Router = express.Router();
+const router: Router = express.Router();
 
-// // Protect all routes and restrict to superAdmin
-// router.use(protect);
-// router.use(restrictTo('superAdmin'));
+// Protected routes (require authentication)
+router.use(protect);
 
-// // Dashboard overview statistics
-// router.get('/dashboard', statisticsController.getDashboardStats);
-// // Top selling products
-// router.get('/top-products', statisticsController.getTopSellingProducts);
-// // Customer payment statistics
-// router.get('/customer-payments', statisticsController.getCustomerPaymentStats);
-// // Monthly sales trend
-// router.get('/sales-trend', statisticsController.getMonthlySalesTrend);
-// // Upcoming EMI payments
-// router.get('/upcoming-emis', statisticsController.getUpcomingEMIPayments);
-// // Inventory status
-// router.get('/inventory', statisticsController.getInventoryStatus);
+// Admin-only routes
+router.get('/', restrictTo('admin', 'superAdmin'), (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    message: 'Statistics route - implementation pending'
+  });
+});
 
-// export default router;
+export default router;

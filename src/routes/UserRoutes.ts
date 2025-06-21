@@ -11,7 +11,7 @@ router.post('/forgotPassword', authController.forgotPassword);
 router.patch('/resetPassword/:token', authController.resetPassword);
 
 // Protected routes
-router.use(protect);
+router.use(authController.protect);
 
 // User-accessible routes
 router.get('/me', userController.getMe);
@@ -19,7 +19,7 @@ router.patch('/updatePassword', authController.updateUserPassword);
 router.patch('/updateMe', userController.updateMe);
 router.delete('/deleteMe', userController.deleteMe);
 
-// Admin/staff-only routes
+// Admin/seller-only routes
 router
   .route('/')
   .get(userController.getAllUsers);
@@ -27,8 +27,8 @@ router
 router
   .route('/:id')
   .get(userController.getUserById)
-  .patch(restrictTo('admin', 'staff'), userController.updateUser)
-  .delete(restrictTo('admin'), userController.deleteUser);
+  .patch(authController.restrictTo('admin', 'seller'), userController.updateUser)
+  .delete(authController.restrictTo('admin'), userController.deleteUser);
 
 export default router;
 // // const fs = require('fs');

@@ -78,7 +78,7 @@ export const newCustomer = [
     } as unknown as Response;
 
     await handleFactory.newOne(Customer, false)(
-      { ...req, body: { fullname, email, phone, address, owner: userId } },
+      { ...req, body: { fullname, email, phone, address, owner: userId } } as Request,
       mockRes,
       next
     );

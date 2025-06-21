@@ -11,7 +11,7 @@ import { catchAsync } from '../utils/catchAsyncModule';
 // import AppError from '../Utils/appError';
 import User, { IUser } from '../models/UserModel';
 import { sendEmail } from '../utils/email';
-import AppError from '@utils/appError';
+import AppError from '../utils/appError';
 
 // --- Logger configuration ---
 const logger = winston.createLogger({

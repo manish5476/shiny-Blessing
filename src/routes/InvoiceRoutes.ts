@@ -8,18 +8,17 @@ const router: Router = express.Router();
 router.use(protect);
 
 // User-accessible routes
-router.get('/:id', invoiceController.getInvoiceById);
+router
+  .route('/:id')
+  .get(invoiceController.getInvoiceById)
+  .patch(restrictTo('admin', 'superAdmin'), invoiceController.updateInvoice)
+  .delete(restrictTo('admin', 'superAdmin'), invoiceController.deleteInvoice);
 
 // Admin/staff-only routes
 router
   .route('/')
   .get(restrictTo('admin', 'superAdmin'), invoiceController.getAllInvoice)
   .post(restrictTo('admin', 'superAdmin'), invoiceController.findDuplicateInvoice, invoiceController.newInvoice);
-
-router
-  .route('/:id')
-  .patch(restrictTo('admin', 'superAdmin'), invoiceController.updateInvoice)
-  .delete(restrictTo('admin', 'superAdmin'), invoiceController.deleteInvoice);
 
 router.post('/productSales', restrictTo('admin', 'superAdmin'), invoiceController.getProductSales);
 

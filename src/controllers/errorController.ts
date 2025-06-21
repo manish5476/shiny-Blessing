@@ -140,7 +140,7 @@ const sendErrorProd = (err: CustomError, res: Response) => {
 // --- Global Error Handling Middleware ---
 
 // The main error handling middleware function
-module.exports = (err: CustomError, req: Request, res: Response, next: NextFunction) => {
+const globalErrorHandler = (err: CustomError, req: Request, res: Response, next: NextFunction) => {
   // Set default status code and status for the error
   err.statusCode = err.statusCode || 500;
   err.status = err.status || 'error';
@@ -174,3 +174,5 @@ module.exports = (err: CustomError, req: Request, res: Response, next: NextFunct
     sendErrorProd(error, res);
   }
 };
+
+export default globalErrorHandler;

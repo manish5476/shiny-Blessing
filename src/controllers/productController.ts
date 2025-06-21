@@ -3,11 +3,12 @@ import {catchAsync} from '../utils/catchAsyncModule';
 import AppError from '../utils/appError';
 import { body, validationResult } from 'express-validator'; // Still needed if you have custom validation
 import * as handleFactory from './handleFactory';
+import { AuthenticatedRequest } from '../types/custom';
 
 // It's assumed that all routes using these handlers are protected by authController.protect middleware,
 // which populates req.user with the authenticated user's details (including role and _id).
 
-exports.findDuplicateProduct = catchAsync(async (req, res, next) => {
+export const findDuplicateProduct = catchAsync(async (req: AuthenticatedRequest, res, next) => {
   const userId = req.user?._id;
   const isSuperAdmin = req.user?.role === 'superAdmin';
   

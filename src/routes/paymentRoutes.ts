@@ -3,23 +3,19 @@ import * as paymentController from '../controllers/paymentController';
 import { protect, restrictTo } from '../controllers/authController';
 
 const router: Router = express.Router();
-
-// Protected routes (require authentication)
 router.use(protect);
-
-// User-accessible routes
 router
   .route('/')
   .post(paymentController.newPayment)
-  .get(restrictTo('admin', 'staff'), paymentController.getAllPayment);
+  .get(restrictTo('admin', 'seller'), paymentController.getAllPayment);
 
 router
   .route('/:id')
   .get(paymentController.getPaymentById)
-  .patch(restrictTo('admin', 'staff'), paymentController.updatePayment)
-  .delete(restrictTo('admin', 'staff'), paymentController.deletePayment);
+  .patch(restrictTo('admin', 'seller'), paymentController.updatePayment)
+  .delete(restrictTo('admin', 'seller'), paymentController.deletePayment);
 
-// Bulk delete for admin/staff
-router.delete('/bulk', restrictTo('admin', 'staff'), paymentController.deleteMultiplePayment);
+// Bulk delete for admin/seller
+router.delete('/bulk', restrictTo('admin', 'seller'), paymentController.deleteMultiplePayment);
 
 export default router;

@@ -11,7 +11,7 @@ import { body, validationResult } from 'express-validator'; // Still needed if y
 import * as handleFactory from './handleFactory';
 import Review from "../models/ReviewModel";
 
-exports.setUserProductIds = (req:any, res:any, next:any) => {
+export const setUserProductIds = (req:any, res:any, next:any) => {
   if (!req.body.product && req.params.productId) {
     req.body.product = req.params.productId;
   }
@@ -20,8 +20,8 @@ exports.setUserProductIds = (req:any, res:any, next:any) => {
   }
   next();
 };
-exports.getAllReviews = handleFactory.getAll(Review);
-exports.reviewById = handleFactory.getOne(Review, { path: "product" });
-exports.createReview = handleFactory.newOne(Review);
-exports.updateReview = handleFactory.updateOne(Review);
-exports.deleteReview = handleFactory.deleteOne(Review);
+export const getAllReviews = handleFactory.getAll(Review);
+export const reviewById = handleFactory.getOne(Review, { path: "product" });
+export const createReview = handleFactory.newOne(Review);
+export const updateReview = handleFactory.updateOne(Review);
+export const deleteReview = handleFactory.deleteOne(Review);

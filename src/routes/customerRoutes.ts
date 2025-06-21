@@ -8,7 +8,11 @@ const router: Router = express.Router();
 // Protected routes (require authentication)
 router.use(protect);
 
-router.get('/:id', customerController.getCustomerById);
+router
+  .route('/:id')
+  .get(customerController.getCustomerById)
+  .patch(restrictTo('admin', 'superAdmin'), customerController.updateCustomer)
+  .delete(restrictTo('admin', 'superAdmin'), customerController.deleteCustomer);
 
 // Admin/superAdmin-only routes
 router
@@ -16,11 +20,6 @@ router
   .get(restrictTo('admin', 'superAdmin'), customerController.getAllCustomer)
   .post(restrictTo('admin', 'superAdmin'), customerController.findDuplicateCustomer, customerController.newCustomer)
   .delete(restrictTo('admin', 'superAdmin'), customerController.deleteMultipleCustomer);
-
-router
-  .route('/:id')
-  .patch(restrictTo('admin', 'superAdmin'), customerController.updateCustomer)
-  .delete(restrictTo('admin', 'superAdmin'), customerController.deleteCustomer);
 
 // Dropdown for admins
 router.get('/customerDropDown', restrictTo('admin', 'superAdmin'), customerController.getCustomerDropdown);
