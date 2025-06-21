@@ -1,19 +1,25 @@
-import * as authController from '../controllers/authController';
+import express, { Router } from 'express';
 import * as paymentController from '../controllers/paymentController';
+import { protect, restrictTo } from '../controllers/authController';
 
-import express from 'express';
-const router = express.Router();
+const router: Router = express.Router();
+
 // Protected routes (require authentication)
-router.use(authController.protect);
+router.use(protect);
 
 // User-accessible routes
-router.post('/', paymentController.newPayment); // Users can create payments
-router.get('/:id', paymentController.getPaymentById); // Users can view their payment
+router
+  .route('/')
+  .post(paymentController.newPayment)
+  .get(restrictTo('admin', 'staff'), paymentController.getAllPayment);
 
-// Admin/staff-only routes
-router.get('/', paymentController.getAllPayment); 
-router.patch('/:id', paymentController.updatePayment); 
-router.delete('/:id', paymentController.deletePayment); 
+router
+  .route('/:id')
+  .get(paymentController.getPaymentById)
+  .patch(restrictTo('admin', 'staff'), paymentController.updatePayment)
+  .delete(restrictTo('admin', 'staff'), paymentController.deletePayment);
 
-module.exports = router;
-export default router; // ✅ Use default export
+// Bulk delete for admin/staff
+router.delete('/bulk', restrictTo('admin', 'staff'), paymentController.deleteMultiplePayment);
+
+export default router;

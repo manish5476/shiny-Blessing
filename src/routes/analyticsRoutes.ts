@@ -1,11 +1,12 @@
-const express = require('express');
-const router = express.Router();
-const analyticsController = require('../Controllers/analyticsController');
-const authController = require('../Controllers/authController');
+import express, { Router } from 'express';
+import * as analyticsController from '../controllers/analyticsController';
+import { protect, restrictTo } from '../controllers/authController';
 
-// Protect all routes and restrict to admin only
-router.use(authController.protect);
-router.use(authController.restrictTo('admin'));
+const router: Router = express.Router();
+
+// Protect all routes and restrict to superAdmin
+router.use(protect);
+router.use(restrictTo('superAdmin'));
 
 // Sales performance metrics
 router.get('/sales-performance', analyticsController.getSalesPerformance);
@@ -22,4 +23,4 @@ router.get('/payment-efficiency', analyticsController.getPaymentCollectionEffici
 // Inventory turnover rate
 router.get('/inventory-turnover', analyticsController.getInventoryTurnover);
 
-module.exports = router; 
+export default router;

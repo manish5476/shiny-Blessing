@@ -32,15 +32,15 @@ if (!isSuperAdmin && userId) {
   next();
 });
 
-
+export const deleteMultipleProduct = handleFactory.deleteMultiple(Product, true);
 
 // Using handleFactory for all standard CRUD operations,
 // which already incorporate the owner filter and super admin bypass logic.
-exports.getAllProduct = handleFactory.getAll(Product); // reviews path typically only for getOne
-exports.getProductById = handleFactory.getOne(Product, { path: "reviews" }); // Include populate option as specified
-exports.deleteProduct = handleFactory.deleteOne(Product);
-exports.updateProduct = handleFactory.updateOne(Product);
-exports.newProduct = handleFactory.newOne(Product);
+export const getAllProduct = handleFactory.getAll(Product); // reviews path typically only for getOne
+export const getProductById = handleFactory.getOne(Product, { path: "reviews" }); // Include populate option as specified
+export const deleteProduct = handleFactory.deleteOne(Product);
+export const updateProduct = handleFactory.updateOne(Product);
+export const newProduct = handleFactory.newOne(Product);
 // exports.deleteMultipleProduct = handleFactory.deleteMultipleProduct(Product); // Generic multiple delete
 // const Product = require('../Models/productModel');
 // const catchAsync = require('../Utils/catchAsyncModule');

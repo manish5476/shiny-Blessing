@@ -1,21 +1,56 @@
-const express = require('express');
-const router = express.Router();
-const authController = require('../Controllers/authController');
-const customerController = require('../Controllers/CustomerController');
+// src/routes/customerRoutes.ts
+import express, { Router } from 'express';
+import * as customerController from '../controllers/customerController';
+import { protect, restrictTo } from '../controllers/authController';
+
+const router: Router = express.Router();
 
 // Protected routes (require authentication)
-router.use(authController.protect);
+router.use(protect);
 
-// User-accessible routes
-router.get('/:id', customerController.getCustomerById); // Users can view their own profile (assumes ID matches authenticated user)
+router.get('/:id', customerController.getCustomerById);
 
-// Admin/staff-only routes
-router.get('/', authController.restrictTo('admin', 'staff'), customerController.getAllCustomer); // View all customers
-router.post('/', authController.restrictTo('admin', 'staff'), customerController.findDuplicateCustomer, customerController.newCustomer); // Create customer
-router.patch('/:id', authController.restrictTo('admin', 'staff'), customerController.updateCustomer); // Update customer
-router.delete('/:id', authController.restrictTo('admin', 'staff'), customerController.deleteCustomer); // Delete customer
-// router.delete('/deletemany', authController.restrictTo('admin', 'staff'), customerController.deleteMultipleCustomer); // Delete multiple customers
-// authController.restrictTo('admin', 'staff'),
-// router.get('/customerDropDown', customerController.getCustomerDropdown); // Dropdown for admins
+// Admin/superAdmin-only routes
+router
+  .route('/')
+  .get(restrictTo('admin', 'superAdmin'), customerController.getAllCustomer)
+  .post(restrictTo('admin', 'superAdmin'), customerController.findDuplicateCustomer, customerController.newCustomer)
+  .delete(restrictTo('admin', 'superAdmin'), customerController.deleteMultipleCustomer);
 
-module.exports = router;
+router
+  .route('/:id')
+  .patch(restrictTo('admin', 'superAdmin'), customerController.updateCustomer)
+  .delete(restrictTo('admin', 'superAdmin'), customerController.deleteCustomer);
+
+// Dropdown for admins
+router.get('/customerDropDown', restrictTo('admin', 'superAdmin'), customerController.getCustomerDropdown);
+
+export default router;
+// import express, { Router } from 'express';
+// import * as customerController from '../controllers/customerController';
+// import { protect, restrictTo } from '../controllers/authController';
+
+// const router: Router = express.Router();
+
+// // Protected routes (require authentication)
+// router.use(protect);
+
+// // User-accessible routes
+// router.get('/:id', customerController.getCustomerById);
+
+// // Admin/superAdmin-only routes
+// router
+//   .route('/')
+//   .get(restrictTo('admin', 'superAdmin'), customerController.getAllCustomers)
+//   .post(restrictTo('admin', 'superAdmin'), customerController.findDuplicateCustomer, customerController.newCustomer)
+//   .delete(restrictTo('admin', 'superAdmin'), customerController.deactivateMultipleCustomers);
+
+// router
+//   .route('/:id')
+//   .patch(restrictTo('admin', 'superAdmin'), customerController.updateCustomer)
+//   .delete(restrictTo('admin', 'superAdmin'), customerController.deleteCustomer);
+
+// // Dropdown for admins
+// router.get('/customerDropDown', restrictTo('admin', 'superAdmin'), customerController.getCustomerDropdown);
+
+// export default router;

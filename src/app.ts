@@ -13,8 +13,8 @@ import path from 'path';
 import fs from 'fs';
 
 // Custom utilities and handlers
-import globalErrorHandler from './Controllers/errorController';
-import AppError from './Utils/appError';
+// import globalErrorHandler from './Controllers/errorController';
+import AppError from './utils/appError';
 
 // Import routes
 import productRoutes from './routes/productRoutes';

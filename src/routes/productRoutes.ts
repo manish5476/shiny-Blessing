@@ -1,24 +1,37 @@
-const express = require('express');
-const router = express.Router();
-const productControl = require('../Controllers/productController');
-const authController = require('../Controllers/authController');
-const reviewRoutes = require('./reviewRoutes');
-const getMasterList = require('../Controllers/MasterliastController')
+import express, { Router } from 'express';
+import {
+  getAllProduct,
+  getProductById,
+  newProduct,
+  deleteProduct,
+  updateProduct,
+  findDuplicateProduct,
+  deleteMultipleProduct,
+} from '../controllers/productController';
+import { protect, restrictTo } from '../controllers/authController';
+import reviewRoutes from './reviewRoutes';
+
+const router: Router = express.Router();
+
 // Protected routes (require authentication)
-router.get('/DropdownData', productControl.getProductDropdownWithId); // Users can get dropdown data
-router.get('/autopopulate', getMasterList.getMasterList); // Users can get dropdown data
+router.use(protect);
 
-router.use(authController.protect);
 // User-accessible routes
-router.get('/', productControl.getAllProduct); // Users can view all products
-router.get('/:id', productControl.getProductById); // Users can view a specific product
-// Admin/staff-only routes
-router.post('/', authController.restrictTo('admin', 'staff'), productControl.findDuplicateProduct, productControl.newProduct); // Create product
-router.patch('/:id', authController.restrictTo('admin', 'staff'), productControl.updateProduct); // Update product
-router.delete('/:id', authController.restrictTo('admin', 'staff'), productControl.deleteProduct); // Delete product
-router.delete('/deletemany', authController.restrictTo('admin', 'staff'), productControl.deleteMultipleProduct); // Delete multiple products
+router.get('/', getAllProduct);
+router.get('/:id', getProductById);
 
-// Nested review routes (user can create reviews, controlled by reviewRoutes)
+// Admin/staff-only routes
+router
+  .route('/')
+  .post(restrictTo('admin', 'staff'), findDuplicateProduct, newProduct)
+  .delete(restrictTo('admin', 'staff'), deleteMultipleProduct);
+
+router
+  .route('/:id')
+  .patch(restrictTo('admin', 'staff'), updateProduct)
+  .delete(restrictTo('admin', 'staff'), deleteProduct);
+
+// Nested review routes
 router.use('/:productId/reviews', reviewRoutes);
 
-module.exports = router;
+export default router;

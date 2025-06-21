@@ -1,16 +1,22 @@
-const express = require('express');
-const router = express.Router();
-const authController = require('../Controllers/authController');
-const sellerController = require('../Controllers/sellerController');
+import express, { Router } from 'express';
+import * as sellerController from '../controllers/sellerController';
+import { protect, restrictTo } from '../controllers/authController';
+
+const router: Router = express.Router();
 
 // Protected routes (require authentication)
-router.use(authController.protect);
+router.use(protect);
 
 // Admin/staff-only routes
-router.get('/', authController.restrictTo('admin', 'staff'), sellerController.getAllSeller);
-router.post('/', authController.restrictTo('admin', 'staff'), sellerController.newSeller);
-router.get('/:id', authController.restrictTo('admin', 'staff'), sellerController.getSellerById);
-router.patch('/:id', authController.restrictTo('admin', 'staff'), sellerController.updateSeller);
-router.delete('/:id', authController.restrictTo('admin', 'staff'), sellerController.deleteSeller);
+router
+  .route('/')
+  .get(restrictTo('admin', 'superAdmin'), sellerController.getAllSeller)
+  .post(restrictTo('admin', 'superAdmin'), sellerController.newSeller);
 
-module.exports = router;
+router
+  .route('/:id')
+  .get(restrictTo('admin', 'superAdmin'), sellerController.getSellerById)
+  .patch(restrictTo('admin', 'superAdmin'), sellerController.updateSeller)
+  .delete(restrictTo('admin', 'superAdmin'), sellerController.deleteSeller);
+
+export default router;

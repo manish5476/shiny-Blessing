@@ -1,14 +1,15 @@
-const express = require('express');
-const router = express.Router();
-const masterListController = require('../Controllers/masterListController');
-const authController = require('../Controllers/authController');
+import express, { Router } from 'express';
+import * as masterListController from '../controllers/masterListController';
+import { protect } from '../controllers/authController';
+
+const router: Router = express.Router();
 
 // Protect all routes
-router.use(authController.protect);
+router.use(protect);
 
-// Get all master lists
+// Get master lists
 router.get('/', masterListController.getMasterList);
 router.get('/:module', masterListController.getModuleMasterList);
 router.get('/search/:module', masterListController.searchMasterList);
 
-module.exports = router; 
+export default router;

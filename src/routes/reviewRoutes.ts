@@ -1,18 +1,23 @@
-const express = require('express');
-const router = express.Router({ mergeParams: true });
-const authController = require('../Controllers/authController');
-const reviewController = require('../Controllers/reviewController');
+import express, { Router } from 'express';
+import * as reviewController from '../controllers/reviewController';
+import { protect, restrictTo } from '../controllers/authController';
+
+const router: Router = express.Router({ mergeParams: true });
 
 // Protected routes (require authentication)
-router.use(authController.protect);
+router.use(protect);
 
 // User-accessible routes
-router.get('/', reviewController.getAllReviews); // Users can view reviews
-router.post('/', authController.restrictTo('user'), reviewController.setUserProductIds, reviewController.createReview); // Users can create reviews
+router
+  .route('/')
+  .get(reviewController.getAllReviews)
+  .post(restrictTo('user'), reviewController.setUserProductIds, reviewController.createReview);
 
-// Mixed access (user can manage their own, admin can manage all)
-router.patch('/:id', authController.restrictTo('user', 'admin'), reviewController.updateReview); // User or admin
-router.delete('/:id', authController.restrictTo('user', 'admin'), reviewController.deleteReview); // User or admin
-router.get('/:id', authController.restrictTo('user', 'admin'), reviewController.reviewById); // User or admin
+// Mixed access (user or admin)
+router
+  .route('/:id')
+  .get(restrictTo('user', 'admin'), reviewController.reviewById)
+  .patch(restrictTo('user', 'admin'), reviewController.updateReview)
+  .delete(restrictTo('user', 'admin'), reviewController.deleteReview);
 
-module.exports = router;
+export default router;
