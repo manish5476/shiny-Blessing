@@ -1,6 +1,6 @@
-const express = require('express');
-const router = express.Router();
-const authController = require('../Controllers/authController');
+// const express = require('express');
+// const router = express.Router();
+// const authController = require('../Controllers/authController');
 const sellerController = require('../Controllers/sellerController');
 
 // Protected routes (require authentication)

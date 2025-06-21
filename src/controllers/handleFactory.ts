@@ -4,20 +4,16 @@ import { catchAsync } from '../utils/catchAsyncModule';
 import { IUser } from '../models/UserModel'; // Adjust path as needed
 import AppError from '../utils/appError'; // Assuming this exists
 import { ApiFeatures } from '../utils/ApiFeatures'; // Ensure this is correctly imported if it's a separate file
+import { ICustomerModel } from '@models/customerModel';
 
-// Extend Request to include user
 interface AuthenticatedRequest extends Request {
   user?: IUser;
 }
 
-// Interface for documents that may have an optional owner field
-// This interface is useful for indicating that a model *might* have an owner,
-// but the FilterQuery needs explicit typing if 'owner' is not guaranteed on 'T'.
 interface IOwnedDocument extends Document {
   owner?: Types.ObjectId;
 }
 
-// Utility function to validate ObjectId
 const validateObjectId = (id: string, resource: string): Types.ObjectId => {
   if (!Types.ObjectId.isValid(id)) {
     throw new AppError(`Invalid ${resource} ID: ${id}`, 400);
@@ -25,21 +21,13 @@ const validateObjectId = (id: string, resource: string): Types.ObjectId => {
   return new Types.ObjectId(id);
 };
 
-// Utility function for authentication check
 const requireAuth = (req: AuthenticatedRequest, resource: string): Types.ObjectId => {
-  // Ensure req.user._id is explicitly cast to Types.ObjectId as it's often unknown
   if (!req.user || !req.user._id) {
     throw new AppError(`Authentication required to access ${resource}.`, 401);
   }
   return req.user._id as Types.ObjectId;
 };
 
-/**
- * Generic factory function to delete a single document by ID.
- * @param Model - The Mongoose Model to operate on.
- * @param requireOwner - Whether to enforce owner-based deletion (default: true).
- * @returns Express middleware function.
- */
 export const deleteOne = <T extends Document>(
   Model: Model<T>,
   requireOwner: boolean = true
@@ -47,15 +35,11 @@ export const deleteOne = <T extends Document>(
   catchAsync(async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
     const userId = requireAuth(req, Model.modelName);
     const id = validateObjectId(req.params.id, Model.modelName);
-
-    // Explicitly allow 'owner' in FilterQuery if requireOwner is true
     const filter: FilterQuery<T> & { owner?: Types.ObjectId } = { _id: id };
     if (requireOwner && req.user?.role !== 'superAdmin') {
       filter.owner = userId;
     }
-
     const doc = await Model.findOneAndDelete(filter);
-
     if (!doc) {
       return next(new AppError(`${Model.modelName} not found or unauthorized.`, 404));
     }
@@ -68,12 +52,6 @@ export const deleteOne = <T extends Document>(
     });
   });
 
-/**
- * Generic factory function to update a single document by ID.
- * @param Model - The Mongoose Model to operate on.
- * @param requireOwner - Whether to enforce owner-based updates (default: true).
- * @returns Express middleware function.
- */
 export const updateOne = <T extends Document>(
   Model: Model<T>,
   requireOwner: boolean = true
@@ -194,10 +172,7 @@ export const getOne = <T extends Document>(
  * @param requireOwner - Whether to enforce owner-based retrieval (default: true).
  * @returns Express middleware function.
  */
-export const getAll = <T extends Document>(
-  Model: Model<T>,
-  requireOwner: boolean = true
-): Function =>
+export const getAll = <T extends Document>(Model: Model<T>, requireOwner: boolean = true): Function =>
   catchAsync(async (req: AuthenticatedRequest, res: Response) => {
     const userId = requireAuth(req, Model.modelName);
     const isSuperAdmin = req.user?.role === 'superAdmin';
@@ -205,25 +180,14 @@ export const getAll = <T extends Document>(
     // Explicitly allow 'owner' in FilterQuery
     const filter: FilterQuery<T> & { owner?: Types.ObjectId } = isSuperAdmin || !requireOwner ? {} : { owner: userId };
     const combinedFilter = { ...filter, ...req.query };
-
-    // ApiFeatures assumes a query object; it does not directly modify the FilterQuery
     const features = new ApiFeatures<T>(Model.find(combinedFilter as FilterQuery<T>), req.query); // Pass combinedFilter to find()
-    
-    // The previous ApiFeatures chaining was fine.
-    // If ApiFeatures takes a query as first argument: new ApiFeatures(Model.find(combinedFilter), req.query)
-    // If ApiFeatures takes a model and filter as first argument: new ApiFeatures(Model, combinedFilter, req.query)
-    // Assuming ApiFeatures modifies the query based on the second argument (req.query)
-    // and the first argument is the base query.
-    // So, `Model.find(combinedFilter)` should be the start.
-
     const finalQuery = features
-      .filter() // This would apply filters from req.query to the current query
+      .filter()
       .sort()
       .limitFields()
       .paginate();
 
-    const docs = await finalQuery.query; // Assuming ApiFeatures stores the modified query in a 'query' property
-
+    const docs = await finalQuery.query;
     res.status(200).json({
       status: 'success',
       statusCode: 200,

@@ -1,6 +1,6 @@
-const express = require('express');
-const router = express.Router({ mergeParams: true });
-const authController = require('../Controllers/authController');
+// const express = require('express');
+// const router = express.Router({ mergeParams: true });
+// const authController = require('../Controllers/authController');
 const reviewController = require('../Controllers/reviewController');
 
 // Protected routes (require authentication)

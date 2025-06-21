@@ -36,6 +36,7 @@ export interface ICustomer extends Document {
   email?: string;
   phoneNumbers: IPhoneNumber[];
   addresses: IAddress[];
+  status: 'active' | 'inactive' | 'pending' | 'suspended' | 'blocked';
   cart: ICart;
   paymentHistory: Types.ObjectId[] | IPayment[];
   totalPurchasedAmount?: number;
@@ -46,7 +47,7 @@ export interface ICustomer extends Document {
 // Interface for Customer model
 export interface ICustomerModel extends Model<ICustomer> {
   calculateTotalPurchasedAmountForCustomer(customerId: Types.ObjectId): Promise<number>;
-  updateRemainingAmount(customerId: Types.ObjectId): Promise<void>;
+  updateRemainingAmount(customerId: Types.ObjectId): Promise<ICustomer | null>;
 }
 
 // PhoneNumber schema
@@ -102,10 +103,12 @@ const cartItemSchema = new Schema<ICartItem>({
     type: Schema.Types.ObjectId,
     ref: 'Product',
   },
-  invoiceIds: [{
-    type: Schema.Types.ObjectId,
-    ref: 'Invoice',
-  }],
+  invoiceIds: [
+    {
+      type: Schema.Types.ObjectId,
+      ref: 'Invoice',
+    },
+  ],
 });
 
 // Cart schema
@@ -113,54 +116,69 @@ const cartSchema = new Schema<ICart>({
   items: [cartItemSchema],
 });
 
-const customerSchema = new Schema<ICustomer, ICustomerModel>({
-  fullname: {
-    type: String,
-    required: [true, 'Full name is required'],
-    trim: true,
-  },
-  email: {
-    type: String,
-    lowercase: true,
-    validate: {
-      validator: (val: string | undefined) => !val || validator.isEmail(val),
-      message: 'Please provide a valid email',
+const customerSchema = new Schema<ICustomer, ICustomerModel>(
+  {
+    fullname: {
+      type: String,
+      required: [true, 'Full name is required'],
+      trim: true,
     },
-  },
-  phoneNumbers: {
-    type: [phoneNumberSchema],
-    validate: {
-      validator: function (this: ICustomer, v: IPhoneNumber[]): boolean {
-        return this.guaranteerId ? true : v.length > 0;
+    email: {
+      type: String,
+      lowercase: true,
+      validate: {
+        validator: (val: string | undefined) => !val || validator.isEmail(val),
+        message: 'Please provide a valid email',
       },
-      message: 'At least one phone number is required unless a guarantor is provided.',
+    },
+    phoneNumbers: {
+      type: [phoneNumberSchema],
+      validate: {
+        validator: function (this: ICustomer, v: IPhoneNumber[]): boolean {
+          return this.guaranteerId ? true : v.length > 0;
+        },
+        message: 'At least one phone number is required unless a guarantor is provided.',
+      },
+    },
+    addresses: [addressSchema],
+    cart: {
+      type: cartSchema,
+      default: { items: [] },
+    },
+    paymentHistory: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'Payment',
+      },
+    ],
+    totalPurchasedAmount: {
+      type: Number,
+      default: 0,
+    },
+    remainingAmount: {
+      type: Number,
+      default: 0,
+    },
+    guaranteerId: {
+      type: Schema.Types.ObjectId,
+      ref: () => 'Customer',
+    },
+    status: {
+      type: String,
+      enum: ['active', 'inactive', 'pending', 'suspended', 'blocked'],
+      default: 'active',
     },
   },
-  addresses: [addressSchema],
-  cart: {
-    type: cartSchema,
-    default: { items: [] },
-  },
-  paymentHistory: [{
-    type: Schema.Types.ObjectId,
-    ref: 'Payment',
-  }],
-  totalPurchasedAmount: {
-    type: Number,
-    default: 0,
-  },
-  remainingAmount: {
-    type: Number,
-    default: 0,
-  },
-  guaranteerId: {
-    type: Schema.Types.ObjectId,
-    ref: () => 'Customer', // Lazy reference to avoid circular dependency
-  },
-}, {
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true },
-});
+  {
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+    timestamps: true,
+  }
+);
+
+// Indexes for efficient queries
+customerSchema.index({ email: 1 });
+customerSchema.index({ 'phoneNumbers.number': 1 });
 
 // Static method to calculate total purchased amount
 customerSchema.statics.calculateTotalPurchasedAmountForCustomer = async function (
@@ -173,20 +191,30 @@ customerSchema.statics.calculateTotalPurchasedAmountForCustomer = async function
 // Static method to update remaining amount
 customerSchema.statics.updateRemainingAmount = async function (
   customerId: Types.ObjectId
-): Promise<void> {
+): Promise<ICustomer | null> {
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
     const customer = await this.findById(customerId)
       .populate<{ paymentHistory: IPayment[] }>('paymentHistory', 'amount')
       .session(session);
+
     if (!customer) {
       throw new Error(`Customer with ID ${customerId} not found`);
     }
-    const totalPaid = customer.paymentHistory.reduce((sum, payment) => sum + (payment.amount || 0), 0);
-    customer.remainingAmount = Math.max(customer.totalPurchasedAmount || 0 - totalPaid, 0);
+
+    const totalPaid = customer.paymentHistory.reduce(
+      (sum, payment) => sum + (payment.amount || 0),
+      0
+    );
+
+    customer.remainingAmount = Math.max((customer.totalPurchasedAmount || 0) - totalPaid, 0);
+
     await customer.save({ session });
+
     await session.commitTransaction();
+
+    return customer;
   } catch (err: unknown) {
     await session.abortTransaction();
     throw err instanceof Error ? err : new Error('Unknown error during remaining amount update');
@@ -199,6 +227,244 @@ customerSchema.statics.updateRemainingAmount = async function (
 const Customer = mongoose.model<ICustomer, ICustomerModel>('Customer', customerSchema);
 
 export default Customer;
+// import mongoose, { Schema, Document, Model, Types } from 'mongoose';
+// import validator from 'validator';
+// import { IPayment } from './paymentModel';
+// import Invoice from './invoiceModel';
+
+// // Interface for PhoneNumber
+// export interface IPhoneNumber {
+//   number: string;
+//   type: 'home' | 'work' | 'mobile' | 'other';
+//   isPrimary: boolean;
+// }
+
+// // Interface for Address
+// export interface IAddress {
+//   street: string;
+//   city: string;
+//   state: string;
+//   pincode: string;
+//   country: string;
+// }
+
+// // Interface for CartItem
+// export interface ICartItem {
+//   productId: Types.ObjectId;
+//   invoiceIds: Types.ObjectId[];
+// }
+
+// // Interface for Cart
+// export interface ICart {
+//   items: ICartItem[];
+// }
+
+// // Interface for Customer document
+// export interface ICustomer extends Document {
+//   fullname: string;
+//   email?: string;
+//   phoneNumbers: IPhoneNumber[];
+//   addresses: IAddress[];
+//   status: 'active' | 'inactive' | 'pending' | 'suspended' | 'blocked';
+//   cart: ICart;
+//   paymentHistory: Types.ObjectId[] | IPayment[];
+//   totalPurchasedAmount?: number;
+//   remainingAmount?: number;
+//   guaranteerId?: Types.ObjectId;
+// }
+
+// // Interface for Customer model
+// export interface ICustomerModel extends Model<ICustomer> {
+//   calculateTotalPurchasedAmountForCustomer(customerId: Types.ObjectId): Promise<number>;
+//   updateRemainingAmount(customerId: Types.ObjectId): Promise<void>;
+  
+// }
+
+// // PhoneNumber schema
+// const phoneNumberSchema = new Schema<IPhoneNumber>({
+//   number: {
+//     type: String,
+//     required: [true, 'Phone number is required'],
+//     match: [/^\+?[1-9]\d{1,14}$/, 'Please provide a valid phone number'],
+//   },
+//   type: {
+//     type: String,
+//     enum: ['home', 'work', 'mobile', 'other'],
+//     default: 'mobile',
+//   },
+//   isPrimary: {
+//     type: Boolean,
+//     default: false,
+//   },
+// });
+
+// // Address schema
+// const addressSchema = new Schema<IAddress>({
+//   street: {
+//     type: String,
+//     required: [true, 'Street is required'],
+//     trim: true,
+//   },
+//   city: {
+//     type: String,
+//     required: [true, 'City is required'],
+//     trim: true,
+//   },
+//   state: {
+//     type: String,
+//     required: [true, 'State is required'],
+//     trim: true,
+//   },
+//   pincode: {
+//     type: String,
+//     required: [true, 'PIN code is required'],
+//     match: [/^\d{6}$/, 'PIN code must be a 6-digit number'],
+//   },
+//   country: {
+//     type: String,
+//     required: [true, 'Country is required'],
+//     trim: true,
+//   },
+// });
+
+// // CartItem schema
+// const cartItemSchema = new Schema<ICartItem>({
+//   productId: {
+//     type: Schema.Types.ObjectId,
+//     ref: 'Product',
+//   },
+//   invoiceIds: [{
+//     type: Schema.Types.ObjectId,
+//     ref: 'Invoice',
+//   }],
+// });
+
+// // Cart schema
+// const cartSchema = new Schema<ICart>({
+//   items: [cartItemSchema],
+// });
+
+// const customerSchema = new Schema<ICustomer, ICustomerModel>({
+//   fullname: {
+//     type: String,
+//     required: [true, 'Full name is required'],
+//     trim: true,
+//   },
+//   email: {
+//     type: String,
+//     lowercase: true,
+//     validate: {
+//       validator: (val: string | undefined) => !val || validator.isEmail(val),
+//       message: 'Please provide a valid email',
+//     },
+//   },
+//   phoneNumbers: {
+//     type: [phoneNumberSchema],
+//     validate: {
+//       validator: function (this: ICustomer, v: IPhoneNumber[]): boolean {
+//         return this.guaranteerId ? true : v.length > 0;
+//       },
+//       message: 'At least one phone number is required unless a guarantor is provided.',
+//     },
+//   },
+//   addresses: [addressSchema],
+//   cart: {
+//     type: cartSchema,
+//     default: { items: [] },
+//   },
+//   paymentHistory: [{
+//     type: Schema.Types.ObjectId,
+//     ref: 'Payment',
+//   }],
+//   totalPurchasedAmount: {
+//     type: Number,
+//     default: 0,
+//   },
+//   remainingAmount: {
+//     type: Number,
+//     default: 0,
+//   },
+//   guaranteerId: {
+//     type: Schema.Types.ObjectId,
+//     ref: () => 'Customer', // Lazy reference to avoid circular dependency
+//   },
+// }, {
+//   toJSON: { virtuals: true },
+//   toObject: { virtuals: true },
+// });
+
+// // Static method to calculate total purchased amount
+// customerSchema.statics.calculateTotalPurchasedAmountForCustomer = async function (
+//   customerId: Types.ObjectId
+// ): Promise<number> {
+//   const invoices = await Invoice.find({ buyer: customerId }, 'totalAmount').lean();
+//   return invoices.reduce((sum, invoice) => sum + (invoice.totalAmount || 0), 0);
+// };
+
+// // // Static method to update remaining amount
+// // customerSchema.statics.updateRemainingAmount = async function (
+// //   customerId: Types.ObjectId
+// // ): Promise<void> {
+// //   const session = await mongoose.startSession();
+// //   session.startTransaction();
+// //   try {
+// //     const customer = await this.findById(customerId)
+// //       .populate<{ paymentHistory: IPayment[] }>('paymentHistory', 'amount')
+// //       .session(session);
+// //     if (!customer) {
+// //       throw new Error(`Customer with ID ${customerId} not found`);
+// //     }
+// //     const totalPaid = customer.paymentHistory.reduce((sum, payment) => sum + (payment.amount || 0), 0);
+// //     customer.remainingAmount = Math.max(customer.totalPurchasedAmount || 0 - totalPaid, 0);
+// //     await customer.save({ session });
+    
+// //     await session.commitTransaction();
+// //   } catch (err: unknown) {
+// //     await session.abortTransaction();
+// //     throw err instanceof Error ? err : new Error('Unknown error during remaining amount update');
+// //   } finally {
+// //     session.endSession();
+// //   }
+// // };
+// // Static method to update remaining amount
+// customerSchema.statics.updateRemainingAmount = async function (
+//   customerId: Types.ObjectId
+// ): Promise<CustomerDocument | null> {
+//   const session = await mongoose.startSession();
+//   session.startTransaction();
+//   try {
+//     const customer = await this.findById(customerId)
+//       .populate<{ paymentHistory: IPayment[] }>('paymentHistory', 'amount')
+//       .session(session);
+
+//     if (!customer) {
+//       throw new Error(`Customer with ID ${customerId} not found`);
+//     }
+
+//     const totalPaid = customer.paymentHistory.reduce(
+//       (sum, payment) => sum + (payment.amount || 0),
+//       0
+//     );
+
+//     customer.remainingAmount = Math.max((customer.totalPurchasedAmount || 0) - totalPaid, 0);
+
+//     await customer.save({ session });
+
+//     await session.commitTransaction();
+
+//     return customer; // ✅ return the updated document
+//   } catch (err: unknown) {
+//     await session.abortTransaction();
+//     throw err instanceof Error ? err : new Error('Unknown error during remaining amount update');
+//   } finally {
+//     session.endSession();
+//   }
+// };
+
+// // Create and export the Customer model
+// const Customer = mongoose.model<ICustomer, ICustomerModel>('Customer', customerSchema);
+
+// export default Customer;
 // // src/models/customerModel.ts
 
 // import mongoose, { Document, Schema, Model, PopulateOptions, Types } from 'mongoose';

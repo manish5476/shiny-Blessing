@@ -1,25 +1,30 @@
-const Product = require('../Models/productModel');
-const catchAsync = require('../Utils/catchAsyncModule');
-const AppError = require('../Utils/appError');
-const { body, validationResult } = require('express-validator'); // Still needed if you have custom validation
-const handleFactory = require("./handleFactory");
+import Product from '../models/productModel';
+import {catchAsync} from '../utils/catchAsyncModule';
+import AppError from '../utils/appError';
+import { body, validationResult } from 'express-validator'; // Still needed if you have custom validation
+import * as handleFactory from './handleFactory';
 
 // It's assumed that all routes using these handlers are protected by authController.protect middleware,
 // which populates req.user with the authenticated user's details (including role and _id).
 
 exports.findDuplicateProduct = catchAsync(async (req, res, next) => {
-  const userId = req.user._id;
-  const isSuperAdmin = req.user.role === 'superAdmin';
+  const userId = req.user?._id;
+  const isSuperAdmin = req.user?.role === 'superAdmin';
+  
+const filter: Record<string, any> = { sku: req.body.sku };
 
-  let filter = { sku: req.body.sku };
-  if (!isSuperAdmin) {
-    filter.owner = userId; // Add owner filter if not super admin
-  }
+if (!isSuperAdmin && userId) {
+  filter.owner = userId;
+}
+
+  // let filter = { sku: req.body.sku };
+  // if (!isSuperAdmin) {
+  //   filter.owner = userId; // Add owner filter if not super admin
+  // }
 
   const existingProduct = await Product.findOne(filter);
 
   if (existingProduct) {
-    // Clarify message if the duplicate is for the current user
     const message = `Product with SKU ${req.body.sku} already exists` +
       (!isSuperAdmin ? ' for your account.' : '.');
     return next(new AppError(message, 400));
@@ -27,24 +32,7 @@ exports.findDuplicateProduct = catchAsync(async (req, res, next) => {
   next();
 });
 
-exports.getProductDropdownWithId = catchAsync(async (req, res, next) => {
-  const userId = req.user._id;
-  const isSuperAdmin = req.user.role === 'superAdmin';
 
-  let filter = {};
-  if (!isSuperAdmin) {
-    filter.owner = userId;
-  }
-
-  // Find products based on the determined filter and select required fields
-  const products = await Product.find(filter).select('title _id');
-
-  res.status(200).json({
-    status: 'success',
-    results: products.length,
-    data: { products },
-  });
-});
 
 // Using handleFactory for all standard CRUD operations,
 // which already incorporate the owner filter and super admin bypass logic.
@@ -53,7 +41,7 @@ exports.getProductById = handleFactory.getOne(Product, { path: "reviews" }); // 
 exports.deleteProduct = handleFactory.deleteOne(Product);
 exports.updateProduct = handleFactory.updateOne(Product);
 exports.newProduct = handleFactory.newOne(Product);
-exports.deleteMultipleProduct = handleFactory.deleteMultipleProduct(Product); // Generic multiple delete
+// exports.deleteMultipleProduct = handleFactory.deleteMultipleProduct(Product); // Generic multiple delete
 // const Product = require('../Models/productModel');
 // const catchAsync = require('../Utils/catchAsyncModule');
 // const AppError = require('../Utils/appError');

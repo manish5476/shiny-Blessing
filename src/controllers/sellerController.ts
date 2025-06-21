@@ -1,7 +1,7 @@
 
-const Seller = require("../Models/Seller");
+import {Seller} from "../models/sellerModel";
 
-const handleFactory = require("./handleFactory");
+import * as handleFactory from './handleFactory';
 
 exports.getAllSeller = handleFactory.getAll(Seller);
 exports.getSellerById = handleFactory.getOne(Seller);

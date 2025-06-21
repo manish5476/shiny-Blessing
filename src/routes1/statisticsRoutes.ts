@@ -1,7 +1,7 @@
-const express = require('express');
-const router = express.Router();
+// const express = require('express');
+// const router = express.Router();
 const statisticsController = require('../Controllers/statisticsController');
-const authController = require('../Controllers/authController');
+// const authController = require('../Controllers/authController');
 
 // Protect all routes and restrict to admin only
 router.use(authController.protect);

@@ -2,17 +2,18 @@
 // const Payment = require("./../Models/paymentModel");
 
 // exports.deleteMultiplePayment = handleFactory.deleteMultiplePayment(Payment)
-const handleFactory = require("./handleFactory");
-const Payment = require('../Models/paymentModel');
-const catchAsync = require('../utils/catchAsyncModule');
-const AppError = require('../utils/appError');
-const { body, validationResult } = require('express-validator');
+import * as handleFactory from './handleFactory';
+import Payment from '../models/paymentModel';
+// import {catchAsync} from '../utils/catchAsyncModule';
+// import AppError from '../utils/appError';
+// import { body, validationResult } from 'express-validator';
 
-exports.getAllPayment = handleFactory.getAll(Payment, { path: "reviews" });
-exports.getPaymentById = handleFactory.getOne(Payment, { path: "reviews" });
-exports.newPayment = handleFactory.newOne(Payment);
-exports.deletePayment = handleFactory.deleteOne(Payment);
-exports.updatePayment = handleFactory.updateOne(Payment);
+export const getAllPayment = handleFactory.getAll(Payment, false );
+export const getPaymentById = handleFactory.getOne(Payment, { path: "reviews" });
+export const newPayment = handleFactory.newOne(Payment);
+export const deletePayment = handleFactory.deleteOne(Payment);
+export const updatePayment = handleFactory.updateOne(Payment);
+
 
 // exports.newPayment = [
 //   body('amount').isNumeric().withMessage('Amount must be a number'),

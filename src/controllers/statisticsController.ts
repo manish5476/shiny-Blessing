@@ -1,15 +1,15 @@
-const catchAsync = require('../utils/catchAsyncModule');
-const Invoice = require('../Models/invoiceModel');
-const Product = require('../Models/productModel');
-const Customer = require('../Models/customerModel');
-const Payment = require('../Models/paymentModel');
-const AppError = require('../utils/appError');
+import {catchAsync} from '../utils/catchAsyncModule';
+import Invoice from '../models/invoiceModel';
+import Product from '../models/productModel';
+import Customer from '../models/customerModel';
+import Payment from '../models/paymentModel';
+import AppError from '../utils/appError';
 
 // It's assumed that all routes using these handlers are protected by authController.protect middleware,
 // which populates req.user with the authenticated user's details (including role and _id).
 
 // Helper function to get the owner filter
-const getOwnerFilter = (req) => {
+const getOwnerFilter = (req:any) => {
     const userId = req.user._id;
     const isSuperAdmin = req.user.role === 'superAdmin';
     return isSuperAdmin ? {} : { owner: userId };
@@ -211,36 +211,49 @@ exports.getCustomerPaymentStats = catchAsync(async (req, res, next) => {
 });
 
 // Get monthly sales trend
+import { ParsedQs } from 'qs'; // Ensure this import if you're using express types
+
 exports.getMonthlySalesTrend = catchAsync(async (req, res, next) => {
-    const { year = new Date().getFullYear() } = req.query;
-    const ownerFilter = getOwnerFilter(req); // Get the owner filter
+  let year: number;
 
-    const monthlySales = await Invoice.aggregate([
-        {
-            $match: {
-                ...ownerFilter, // Apply owner filter
-                date: {
-                    $gte: new Date(year, 0, 1),
-                    $lte: new Date(year, 11, 31)
-                }
-            }
-        },
-        {
-            $group: {
-                _id: { $month: "$date" },
-                totalSales: { $sum: "$totalAmount" },
-                invoiceCount: { $sum: 1 }
-            }
-        },
-        {
-            $sort: { _id: 1 }
-        }
-    ]);
+  if (typeof req.query.year === 'string') {
+    year = parseInt(req.query.year, 10);
+  } else if (Array.isArray(req.query.year) && typeof req.query.year[0] === 'string') {
+    year = parseInt(req.query.year[0], 10);
+  } else {
+    year = new Date().getFullYear();
+  }
 
-    res.status(200).json({
-        status: 'success',
-        data: monthlySales
-    });
+  if (isNaN(year)) {
+    return next(new AppError('Invalid year query parameter', 400));
+  }
+
+  const ownerFilter = getOwnerFilter(req); // Your function
+
+  const monthlySales = await Invoice.aggregate([
+    {
+      $match: {
+        ...ownerFilter,
+        date: {
+          $gte: new Date(year, 0, 1),
+          $lte: new Date(year, 11, 31, 23, 59, 59, 999),
+        },
+      },
+    },
+    {
+      $group: {
+        _id: { $month: "$date" },
+        totalSales: { $sum: "$totalAmount" },
+        invoiceCount: { $sum: 1 },
+      },
+    },
+    { $sort: { _id: 1 } },
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: monthlySales,
+  });
 });
 
 // Get upcoming EMI payments
@@ -329,7 +342,7 @@ exports.getInventoryStatus = catchAsync(async (req, res, next) => {
 });
 
 // const catchAsync = require('../utils/catchAsyncModule');
-// const Product = require('../Models/productModel');
+// const Product = require('../models/productModel');
 // const Invoice = require('../Models/invoiceModel');
 // const Customer = require('../Models/customerModel');
 // const Payment = require('../Models/paymentModel');

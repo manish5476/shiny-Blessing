@@ -1,18 +1,13 @@
-import express from 'express';
-import * as authController from '../controllers/authController';
-import * as customerController from '../controllers/customerController';
-
+const express = require('express');
 const router = express.Router();
+const authController = require('../Controllers/authController');
+const customerController = require('../Controllers/CustomerController');
 
 // Protected routes (require authentication)
 router.use(authController.protect);
 
-// Customer routes
-router.get('/', customerController.getAllCustomers);
-router.get('/:id', customerController.getCustomerById);
-router.post('/', customerController.createCustomer);
-router.patch('/:id', customerController.updateCustomer);
-router.delete('/:id', customerController.deleteCustomer);
+// User-accessible routes
+router.get('/:id', customerController.getCustomerById); // Users can view their own profile (assumes ID matches authenticated user)
 
 // Admin/staff-only routes
 router.get('/', authController.restrictTo('admin', 'staff'), customerController.getAllCustomer); // View all customers

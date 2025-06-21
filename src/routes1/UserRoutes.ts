@@ -1,31 +1,34 @@
 // const fs = require('fs');
-const express = require("express");
+
+// const authController = require("../Controllers/authController");
+import express from 'express';
+import * as authController from '../controllers/authController';
+import * as userController from '../controllers/userController';
+
 const router = express.Router();
-const app = express();
-const authController = require("../Controllers/authController");
-const usercontroller = require("../Controllers/usercontroller");
-app.use(express.json());
 
-router.post("/signup", authController.signup);
-router.post("/login", authController.login);
-router.post("/forgotPassword", authController.forgotPassword);
-router.patch("/resetPassword/:token", authController.resetPassword);
+// Public routes (no authentication)
+router.post('/signup', authController.signup);
+router.post('/login', authController.login);
+router.post('/forgotPassword', authController.forgotPassword);
+router.patch('/resetPassword/:token', authController.resetPassword);
 
+// Protected routes (require authentication)
 router.use(authController.protect);
-// router.get("/me", usercontroller.getMe, usercontroller.getAllUsers);
-router.get("/me", usercontroller.getMe);
-router.get("/allusers", usercontroller.getAllUsers);
-router.patch("/updatePassword", authController.updateUserPassword);
-router.route("/updateMe").patch(usercontroller.updateMe);
-router.route("/deleteMe").delete(usercontroller.deleteMe);
 
-// do not update password with this
-router.route("/updateUser/:id").patch(authController.restrictTo("admin", "staff"), usercontroller.updateUser);
-router.route("/").get(usercontroller.getAllUsers);
-router.route("/:id").get(usercontroller.getUserById);
-router.route("/deleteUser/:id").delete(authController.restrictTo("admin"), usercontroller.deleteUser);
+// User-accessible routes
+router.get('/me', userController.getMe);
+router.patch('/updatePassword', authController.updateUserPassword);
+router.patch('/updateMe', userController.updateMe);
+router.delete('/deleteMe', userController.deleteMe);
 
-module.exports = router;
+// Admin/staff-only routes
+router.get('/allusers', userController.getAllUsers);
+router.patch('/updateUser/:id', authController.restrictTo('admin', 'staff'), userController.updateUser);
+router.get('/:id', userController.getUserById);
+router.delete('/deleteUser/:id', authController.restrictTo('admin'), userController.deleteUser);
+
+export default router;
 
 /**const express = require('express');
 const router = express.Router();
