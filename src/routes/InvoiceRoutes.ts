@@ -1,18 +1,25 @@
-// const express = require('express');
-// const router = express.Router();
-// const authController = require('../Controllers/authController');
-const invoiceController = require('../Controllers/InvoiceController');
+import express, { Router } from 'express';
+import * as invoiceController from '../controllers/invoiceController';
+import { protect, restrictTo } from '../controllers/authController';
+
+const router: Router = express.Router();
 
 // Protected routes (require authentication)
-router.use(authController.protect);
+router.use(protect);
 
 // User-accessible routes
-router.get('/:id', invoiceController.getInvoiceById); // Users can view their invoice
+router
+  .route('/:id')
+  .get(invoiceController.getInvoiceById)
+  .patch(restrictTo('admin', 'superAdmin'), invoiceController.updateInvoice)
+  .delete(restrictTo('admin', 'superAdmin'), invoiceController.deleteInvoice);
 
 // Admin/staff-only routes
-router.get('/', authController.restrictTo('admin', 'staff'), invoiceController.getAllInvoice); // View all invoices
-router.post('/', authController.restrictTo('admin', 'staff'), invoiceController.findDuplicateInvoice, invoiceController.newInvoice); // Create invoice
-router.patch('/:id', authController.restrictTo('admin', 'staff'), invoiceController.updateInvoice); // Update invoice
-router.delete('/:id', authController.restrictTo('admin', 'staff'), invoiceController.deleteInvoice); // Delete invoice
-router.post('/productSales', authController.restrictTo('admin', 'staff'), invoiceController.getProductSales); // Delete invoice
-module.exports = router;
+router
+  .route('/')
+  .get(restrictTo('admin', 'superAdmin'), invoiceController.getAllInvoice)
+  .post(restrictTo('admin', 'superAdmin'), invoiceController.findDuplicateInvoice, invoiceController.newInvoice);
+
+router.post('/productSales', restrictTo('admin', 'superAdmin'), invoiceController.getProductSales);
+
+export default router;

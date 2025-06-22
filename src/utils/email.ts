@@ -1,5 +1,4 @@
-// import nodemailer from 'nodemailer';
-const nodemailer = require('nodemailer');
+import nodemailer from 'nodemailer';
 
 interface EmailOptions {
   email: string;

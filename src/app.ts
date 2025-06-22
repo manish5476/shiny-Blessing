@@ -13,8 +13,8 @@ import path from 'path';
 import fs from 'fs';
 
 // Custom utilities and handlers
-import globalErrorHandler from './Controllers/errorController';
-import AppError from './Utils/appError';
+import globalErrorHandler from './controllers/errorController';
+import AppError from './utils/appError';
 
 // Import routes
 import productRoutes from './routes/productRoutes';
@@ -133,17 +133,17 @@ app.use((err: any, req: Request, res: Response, next: NextFunction) => {
 });
 
 // Routes
-app.use('/api/v1/users', usersRoutes);
-app.use('/api/v1/products', productRoutes);
-app.use('/api/v1/reviews', reviewRoutes);
-app.use('/api/v1/customers', customerRoutes);
-app.use('/api/v1/payments', paymentRoutes);
-app.use('/api/v1/sellers', sellerRoutes);
-app.use('/api/v1/invoices', invoiceRoutes);
-app.use('/api/v1/master-list', masterListRoutes);
-app.use('/api/v1/statistics', statisticsRoutes);
-app.use('/api/v1/analytics', analyticsRoutes);
-app.use('/api/v1/dashboard', dashboardRoutes);
+// app.use('/api/v1/users', usersRoutes);
+// app.use('/api/v1/products', productRoutes);
+// app.use('/api/v1/reviews', reviewRoutes);
+// app.use('/api/v1/customers', customerRoutes);
+// app.use('/api/v1/payments', paymentRoutes);
+// app.use('/api/v1/sellers', sellerRoutes);
+// app.use('/api/v1/invoices', invoiceRoutes);
+// app.use('/api/v1/master-list', masterListRoutes);
+// app.use('/api/v1/statistics', statisticsRoutes);
+// app.use('/api/v1/analytics', analyticsRoutes);
+// app.use('/api/v1/dashboard', dashboardRoutes);
 // app.use('/api/v1/bot', botRoutes);
 
 // Static assets

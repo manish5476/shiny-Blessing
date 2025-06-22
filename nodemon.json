@@ -1,5 +1,6 @@
 {
   "watch": ["src"],
   "ext": "ts",
-  "exec": "ts-node src/server.ts .env.dev"
+  "ignore": ["src/logs/*"],
+  "exec": "ts-node src/server.ts src/.env.dev"
 }

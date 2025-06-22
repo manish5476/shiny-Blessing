@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 // import mongoose from 'mongoose'; // Import mongoose for Types.ObjectId
 import {catchAsync} from '../utils/catchAsyncModule';
-// import AppError from '../Utils/appError';
+import AppError from '../utils/appError';
 import mongoose from 'mongoose'; // Import mongoose for Types.ObjectId
 
 import Invoice, { IInvoice } from '../models/invoiceModel';

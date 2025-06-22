@@ -1,27 +1,35 @@
-import express from 'express';
-import * as productController from '../controllers/productController';
-import * as authController from '../controllers/authController';
-import * as masterListController from '../controllers/masterListController';
+import express, { Router } from 'express';
+import {
+  getAllProduct,
+  getProductById,
+  newProduct,
+  deleteProduct,
+  updateProduct,
+  findDuplicateProduct,
+  deleteMultipleProduct,
+} from '../controllers/productController';
+import { protect, restrictTo } from '../controllers/authController';
 import reviewRoutes from './reviewRoutes';
 
-const router = express.Router();
-
-// Public routes
-router.get('/DropdownData', productController.getProductDropdownWithId);
-router.get('/autopopulate', masterListController.getMasterList);
+const router: Router = express.Router();
 
 // Protected routes (require authentication)
-router.use(authController.protect);
+router.use(protect);
 
 // User-accessible routes
-router.get('/', productController.getAllProduct);
-router.get('/:id', productController.getProductById);
+router.get('/', getAllProduct);
+router.get('/:id', getProductById);
 
-// Admin/staff-only routes
-router.post('/', authController.restrictTo('admin', 'staff'), productController.findDuplicateProduct, productController.newProduct);
-router.patch('/:id', authController.restrictTo('admin', 'staff'), productController.updateProduct);
-router.delete('/:id', authController.restrictTo('admin', 'staff'), productController.deleteProduct);
-router.delete('/deletemany', authController.restrictTo('admin', 'staff'), productController.deleteMultipleProduct);
+// Admin/seller-only routes
+router
+  .route('/')
+  .post(restrictTo('admin', 'seller'), findDuplicateProduct, newProduct)
+  .delete(restrictTo('admin', 'seller'), deleteMultipleProduct);
+
+router
+  .route('/:id')
+  .patch(restrictTo('admin', 'seller'), updateProduct)
+  .delete(restrictTo('admin', 'seller'), deleteProduct);
 
 // Nested review routes
 router.use('/:productId/reviews', reviewRoutes);

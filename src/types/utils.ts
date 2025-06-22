@@ -22,7 +22,11 @@ export type CatchAsyncHandler = (
 ) => Promise<void>;
 
 export function catchAsync(fn: CatchAsyncHandler): CatchAsyncHandler {
-  return (req: Request, res: Response, next: NextFunction) => {
-    fn(req, res, next).catch((err) => next(err));
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await fn(req, res, next);
+    } catch (err) {
+      next(err);
+    }
   };
 }

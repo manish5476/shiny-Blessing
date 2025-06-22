@@ -1,10 +1,11 @@
-import mongoose, { Schema, Document, Model, Query } from 'mongoose';
+import mongoose, { Schema, Document, Model, Query, Types } from 'mongoose';
 import validator from 'validator';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 
 // Interface for User document
 export interface IUser extends Document {
+  id: Types.ObjectId
   name: string;
   email: string;
   photo?: string;
@@ -196,7 +197,7 @@ export default User;
 //           return val === undefined || val === this.password;
 //         },
 //         message: 'Passwords must match',
-//       },  
+//       },
 //   },
 //   passwordChangedAt: Date,
 //   passwordResetToken: String,
